@@ -87,6 +87,9 @@ export const syncEvents = async (
       topics: [[...new Set(eventDatas.map(({ topic }) => topic))]],
       fromBlock,
       toBlock,
+      ...(process.env.WL_COLLECTION && {
+        address: process.env.WL_COLLECTION,
+      }),
     })
     .then(async (logs) => {
       const ftTransferEvents: es.ftTransfers.Event[] = [];
