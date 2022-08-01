@@ -14,7 +14,6 @@ import * as resyncAttributeCache from "@/jobs/update-attribute/resync-attribute-
 import * as tokenRefreshCacheQueue from "@/jobs/token-updates/token-refresh-cache";
 import { Collections } from "@/models/collections";
 import { Tokens } from "@/models/tokens";
-import { OpenseaIndexerApi } from "@/utils/opensea-indexer-api";
 
 const version = "v1";
 
@@ -48,7 +47,7 @@ export const postTokensRefreshV1Options: RouteOptions = {
   },
   handler: async (request: Request) => {
     const payload = request.payload as any;
-    const refreshCoolDownMin = 60; // How many minutes between each refresh
+    const refreshCoolDownMin = 0.01; // How many minutes between each refresh
 
     try {
       const [contract, tokenId] = payload.token.split(":");
@@ -70,10 +69,8 @@ export const postTokensRefreshV1Options: RouteOptions = {
 
       // Update the last sync date
       const currentUtcTime = new Date().toISOString();
-      await Tokens.update(contract, tokenId, { lastMetadataSync: currentUtcTime });
 
-      // Refresh orders from OpenSea
-      await OpenseaIndexerApi.fastTokenSync(payload.token);
+      await Tokens.update(contract, tokenId, { lastMetadataSync: currentUtcTime });
 
       // Refresh meta data
       const collection = await Collections.getByContractAndTokenId(contract, tokenId);

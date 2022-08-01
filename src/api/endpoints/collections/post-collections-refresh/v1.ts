@@ -14,7 +14,6 @@ import * as collectionUpdatesMetadata from "@/jobs/collection-updates/metadata-q
 import * as metadataIndexFetch from "@/jobs/metadata-index/fetch-queue";
 import * as orderFixes from "@/jobs/order-fixes/queue";
 import { Collections } from "@/models/collections";
-import { OpenseaIndexerApi } from "@/utils/opensea-indexer-api";
 
 const version = "v1";
 
@@ -50,7 +49,7 @@ export const postCollectionsRefreshV1Options: RouteOptions = {
   },
   handler: async (request: Request) => {
     const payload = request.payload as any;
-    let refreshCoolDownMin = 60 * 4; // How many minutes between each refresh
+    let refreshCoolDownMin = 0.1; // How many minutes between each refresh
 
     try {
       const collection = await Collections.getById(payload.collection);
@@ -113,9 +112,6 @@ export const postCollectionsRefreshV1Options: RouteOptions = {
 
       // Do these refresh operation only for small collections
       if (!isLargeCollection) {
-        // Refresh contract orders from OpenSea
-        await OpenseaIndexerApi.fastContractSync(collection.contract);
-
         // Refresh the collection tokens metadata
         await metadataIndexFetch.addToQueue(
           [
