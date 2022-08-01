@@ -2,12 +2,10 @@
 
 import { Interface } from "@ethersproject/abi";
 import { Contract } from "@ethersproject/contracts";
-import axios from "axios";
 import slugify from "slugify";
 
 import { baseProvider } from "@/common/provider";
 import { config } from "@/config/index";
-import { getNetworkName } from "@/config/network";
 
 export class MetadataApi {
   static async getCollectionMetadata(
@@ -40,12 +38,6 @@ export class MetadataApi {
         tokenSetId: `contract:${contract}`,
       };
     } else {
-      const url = `${config.metadataApiBaseUrl}/v4/${getNetworkName()}/metadata/collection?method=${
-        config.metadataIndexingMethod
-      }&token=${contract}:${tokenId}`;
-
-      const { data } = await axios.get(url);
-
       const collection: {
         id: string;
         slug: string;
@@ -57,7 +49,28 @@ export class MetadataApi {
         tokenIdRange: [string, string] | null;
         tokenSetId: string;
         isFallback?: boolean;
-      } = (data as any).collection;
+      } = {
+        id: contract,
+        slug: slugify("Polychain Monsters", { lower: true }),
+        name: "Polychain Monsters",
+        community: null,
+        metadata: {
+          imageUrl: "",
+          discordUrl: "https://discord.com/invite/polychainmonsters",
+          description:
+            "Polychain Monsters are beautifully animated digital collectibles with varying scarcities. Each Polymon is backed by a truly unique NFT and can be unpacked with $PMON tokens.",
+          externalUrl: "https://polychainmonsters.com/",
+          bannerImageUrl: "",
+          twitterUsername: "polychainmon",
+        },
+        royalties: {
+          bps: 0,
+          recipient: null,
+        },
+        contract: "0x85F0e02cb992aa1F9F47112F815F519EF1A59E2D",
+        tokenIdRange: null,
+        tokenSetId: "0x85F0e02cb992aa1F9F47112F815F519EF1A59E2D",
+      };
 
       if (collection.isFallback && !options?.allowFallback) {
         throw new Error("Fallback collection data not acceptable");
