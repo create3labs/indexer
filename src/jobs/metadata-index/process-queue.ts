@@ -8,7 +8,6 @@ import { randomUUID } from "crypto";
 import { logger } from "@/common/logger";
 import { redis, extendLock, releaseLock } from "@/common/redis";
 import { config } from "@/config/index";
-import { getNetworkName } from "@/config/network";
 import { PendingRefreshTokens } from "@/models/pending-refresh-tokens";
 import * as metadataIndexWrite from "@/jobs/metadata-index/write-queue";
 
@@ -20,7 +19,7 @@ export const queue = new Queue(QUEUE_NAME, {
     attempts: 10,
     backoff: {
       type: "fixed",
-      delay: 5000,
+      delay: 1000,
     },
     removeOnComplete: 100,
     removeOnFail: 100,
@@ -31,21 +30,6 @@ new QueueScheduler(QUEUE_NAME, { connection: redis.duplicate() });
 
 // BACKGROUND WORKER ONLY
 if (config.doBackgroundWork) {
-  type TokenMetadata = {
-    contract: string;
-    tokenId: string;
-    name?: string;
-    description?: string;
-    imageUrl?: string;
-    mediaUrl?: string;
-    attributes: {
-      key: string;
-      value: string;
-      kind: "string" | "number" | "date" | "range";
-      rank?: number;
-    }[];
-  };
-
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {
@@ -59,7 +43,6 @@ if (config.doBackgroundWork) {
       // Get the tokens from the list
       const pendingRefreshTokens = new PendingRefreshTokens(method);
       const refreshTokens = await pendingRefreshTokens.get(count);
-      const tokenToCollections = {};
 
       // If no more tokens
       if (_.isEmpty(refreshTokens)) {
@@ -67,26 +50,27 @@ if (config.doBackgroundWork) {
       }
 
       // Build the query string and store the collection for each token
+      const metadatas = [];
       for (const refreshToken of refreshTokens) {
-        queryParams.append("token", `${refreshToken.contract}:${refreshToken.tokenId}`);
-        (tokenToCollections as any)[`${refreshToken.contract}:${refreshToken.tokenId}`] =
-          refreshToken.collection;
+        // Get the metadata for the tokens
+        const url = `https://meta.polkamon.com/meta?id=${refreshToken.tokenId}`;
+        const metadata: any = await axios.get(url, { timeout: 60 * 1000 }).then(({ data }) => data);
+        metadatas.push({
+          ...metadata,
+          ...refreshToken,
+          imageUrl: metadata?.image,
+          mediaUrl: metadata?.animation_url,
+          attributes: metadata?.attributes.map((el: any) => ({
+            key: el.trait_type,
+            value: el.value,
+            kind: "string",
+          })),
+        });
       }
 
-      // Get the metadata for the tokens
-      const url = `${
-        config.metadataApiBaseUrl
-      }/v4/${getNetworkName()}/metadata/token?${queryParams.toString()}`;
-
-      const metadataResult = await axios.get(url, { timeout: 60 * 1000 }).then(({ data }) => data);
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const metadata: TokenMetadata[] = (metadataResult as any).metadata;
-
       await metadataIndexWrite.addToQueue(
-        metadata.map((m) => ({
+        metadatas.map((m) => ({
           ...m,
-          collection: (tokenToCollections as any)[`${m.contract.toLowerCase()}:${m.tokenId}`],
         }))
       );
 
