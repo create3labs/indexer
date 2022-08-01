@@ -1,0 +1,63 @@
+diff --git a/node_modules/@reservoir0x/sdk/dist/seaport/addresses.js b/node_modules/@reservoir0x/sdk/dist/seaport/addresses.js
+index be25da7..c1b028a 100644
+--- a/node_modules/@reservoir0x/sdk/dist/seaport/addresses.js
++++ b/node_modules/@reservoir0x/sdk/dist/seaport/addresses.js
+@@ -15,6 +15,7 @@ exports.Exchange = {
+     [utils_1.Network.AvalancheFuji]: "0x00000000006c3852cbef3e08e8df289169ede581",
+     [utils_1.Network.Avalanche]: "0x00000000006c3852cbef3e08e8df289169ede581",
+     [utils_1.Network.PolygonMumbai]: "0x00000000006c3852cbef3e08e8df289169ede581",
++    [utils_1.Network.BSC]: "0x00000000006c3852cbef3e08e8df289169ede581",
+ };
+ exports.ConduitController = {
+     [utils_1.Network.Ethereum]: "0x00000000f9490004c11cef243f5400493c00ad63",
+@@ -29,6 +30,7 @@ exports.ConduitController = {
+     [utils_1.Network.AvalancheFuji]: "0x00000000f9490004c11cef243f5400493c00ad63",
+     [utils_1.Network.Avalanche]: "0x00000000f9490004c11cef243f5400493c00ad63",
+     [utils_1.Network.PolygonMumbai]: "0x00000000f9490004c11cef243f5400493c00ad63",
++    [utils_1.Network.BSC]: "0x00000000f9490004c11cef243f5400493c00ad63",
+ };
+ exports.PausableZone = {
+     [utils_1.Network.Ethereum]: "0x004c00500000ad104d7dbd00e3ae0a5c00560c00",
+diff --git a/node_modules/@reservoir0x/sdk/dist/seaport/exchange.js b/node_modules/@reservoir0x/sdk/dist/seaport/exchange.js
+index fe23494..5f9c2e1 100644
+--- a/node_modules/@reservoir0x/sdk/dist/seaport/exchange.js
++++ b/node_modules/@reservoir0x/sdk/dist/seaport/exchange.js
+@@ -33,8 +33,11 @@ const utils_1 = require("../utils");
+ const Exchange_json_1 = __importDefault(require("./abis/Exchange.json"));
+ class Exchange {
+     constructor(chainId) {
++
+         this.chainId = chainId;
+         this.contract = new contracts_1.Contract(Addresses.Exchange[this.chainId], Exchange_json_1.default);
++
++
+     }
+     // --- Fill order ---
+     async fillOrder(taker, order, matchParams, options) {
+diff --git a/node_modules/@reservoir0x/sdk/dist/utils.d.ts b/node_modules/@reservoir0x/sdk/dist/utils.d.ts
+index ed1698f..10379fb 100644
+--- a/node_modules/@reservoir0x/sdk/dist/utils.d.ts
++++ b/node_modules/@reservoir0x/sdk/dist/utils.d.ts
+@@ -27,7 +27,8 @@ export declare enum Network {
+     PolygonMumbai = 80001,
+     Arbitrum = 42161,
+     Avalanche = 43114,
+-    AvalancheFuji = 43113
++    AvalancheFuji = 43113,
++    BSC = 56
+ }
+ export declare type ChainIdToAddress = {
+     [chainId: number]: string;
+diff --git a/node_modules/@reservoir0x/sdk/dist/utils.js b/node_modules/@reservoir0x/sdk/dist/utils.js
+index 326c045..42fedad 100644
+--- a/node_modules/@reservoir0x/sdk/dist/utils.js
++++ b/node_modules/@reservoir0x/sdk/dist/utils.js
+@@ -64,6 +64,8 @@ var Network;
+     // Polygon
+     Network[Network["Polygon"] = 137] = "Polygon";
+     Network[Network["PolygonMumbai"] = 80001] = "PolygonMumbai";
++    // BSC
++    Network[Network["BSC"] = 56] = "BSC";
+     // Arbitrum
+     Network[Network["Arbitrum"] = 42161] = "Arbitrum";
+     // Avalanche

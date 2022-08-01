@@ -16,7 +16,7 @@
         "allowTemplateLiterals": true
       }
     ],
-    "no-console": "error"
+//    "no-console": "error"
   },
   "env": {
     "es2021": true
