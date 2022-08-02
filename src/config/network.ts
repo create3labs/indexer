@@ -38,11 +38,20 @@ export const getNetworkSettings = () => {
       };
     }
 
+    //BSC
+    case 56: {
+      return {
+        realtimeSyncFrequencySeconds: 15,
+        backfillBlockBatchSize: 128,
+      };
+    }
+
     // Ethereum
     case 1:
     // Rinkeby
     case 4:
     // Default
+
     default: {
       return {
         realtimeSyncFrequencySeconds: 15,
