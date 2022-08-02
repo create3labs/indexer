@@ -11,7 +11,6 @@ import qs from "qs";
 import { setupRoutes } from "@/api/routes";
 import { logger } from "@/common/logger";
 import { config } from "@/config/index";
-import { getNetworkName } from "@/config/network";
 import { ApiKeyManager } from "@/models/api-keys";
 import { Sources } from "@/models/sources";
 import { allJobQueues } from "@/jobs/index";
@@ -113,7 +112,7 @@ export const start = async (): Promise<void> => {
           },
         },
         schemes: ["https", "http"],
-        host: `${config.chainId === 1 ? "api" : `api-${getNetworkName()}`}.reservoir.tools`,
+        host: `${config.chainId === 1 ? "api" : "localhost:3000"}`,
         cors: true,
         tryItOutEnabled: true,
         documentationPath: "/",
