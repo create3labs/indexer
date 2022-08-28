@@ -1,6 +1,6 @@
 import { Interface } from "@ethersproject/abi";
 import { EventData } from "@/events-sync/data";
-import { Nouns } from "@reservoir0x/sdk";
+import { Nouns } from "@0xlol/sdk";
 import { config } from "@/config/index";
 
 export const auctionSettled: EventData = {

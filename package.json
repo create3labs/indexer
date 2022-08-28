@@ -22,6 +22,7 @@
     "release": "standard-version"
   },
   "dependencies": {
+    "@0xlol/sdk": "^0.0.160",
     "@bull-board/hapi": "4.0.1",
     "@commitlint/cli": "^16.2.1",
     "@commitlint/config-conventional": "^16.2.1",
@@ -32,7 +33,7 @@
     "@hapi/inert": "^6.0.4",
     "@hapi/vision": "^6.1.0",
     "@poprank/rankings": "^1.1.20",
-    "@reservoir0x/sdk": "0.0.157",
+    "@reservoir0x/sdk": "^0.0.159",
     "@types/date-fns": "^2.6.0",
     "@types/hapi__basic": "^5.1.2",
     "@types/hapi__hapi": "^20.0.9",

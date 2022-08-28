@@ -3,7 +3,7 @@
 import { splitSignature } from "@ethersproject/bytes";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
-import * as Sdk from "@reservoir0x/sdk";
+import * as Sdk from "@0xlol/sdk";
 import Joi from "joi";
 
 import { logger } from "@/common/logger";

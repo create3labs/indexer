@@ -7,7 +7,7 @@ import { _TypedDataEncoder } from "@ethersproject/hash";
 import { Wallet } from "@ethersproject/wallet";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
-import * as Sdk from "@reservoir0x/sdk";
+import * as Sdk from "@0xlol/sdk";
 import axios from "axios";
 import Joi from "joi";
 

@@ -10,7 +10,7 @@ import { config } from "@/config/index";
 
 import { Tokens } from "@/models/tokens";
 import { Collections } from "@/models/collections";
-import { generateMerkleTree } from "@reservoir0x/sdk/dist/common/helpers/merkle";
+import { generateMerkleTree } from "@0xlol/sdk/dist/common/helpers/merkle";
 import * as tokenSet from "@/orderbook/token-sets";
 import { generateSchemaHash } from "@/orderbook/orders/utils";
 import { TokenSet } from "@/orderbook/token-sets/token-list";

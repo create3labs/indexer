@@ -1,5 +1,5 @@
 import { Interface } from "@ethersproject/abi";
-import { LooksRare } from "@reservoir0x/sdk";
+import { LooksRare } from "@0xlol/sdk";
 
 import { config } from "@/config/index";
 import { EventData } from "@/events-sync/data";

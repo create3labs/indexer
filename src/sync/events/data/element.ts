@@ -1,6 +1,6 @@
 import { Interface } from "@ethersproject/abi";
 import { EventData } from "@/events-sync/data";
-import { Element } from "@reservoir0x/sdk";
+import { Element } from "@0xlol/sdk";
 import { config } from "@/config/index";
 
 export const erc721SellOrderFilled: EventData = {

@@ -1,4 +1,4 @@
-import * as Sdk from "@reservoir0x/sdk";
+import * as Sdk from "@0xlol/sdk";
 
 import { redb } from "@/common/db";
 import { toBuffer } from "@/common/utils";

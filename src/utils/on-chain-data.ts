@@ -1,4 +1,4 @@
-import { Common } from "@reservoir0x/sdk";
+import { Common } from "@0xlol/sdk";
 
 import { baseProvider } from "@/common/provider";
 import * as ftApprovalsModel from "@/models/ft-approvals";

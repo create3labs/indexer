@@ -9,8 +9,8 @@ export * as zeroExV4 from "@/orderbook/orders/zeroex-v4";
 
 // Imports
 
-import * as Sdk from "@reservoir0x/sdk";
-import { BidDetails, ListingDetails } from "@reservoir0x/sdk/dist/router/types";
+import * as Sdk from "@0xlol/sdk";
+import { BidDetails, ListingDetails } from "@0xlol/sdk/dist/router/types";
 
 import { redb } from "@/common/db";
 import { config } from "@/config/index";

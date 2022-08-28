@@ -1,6 +1,6 @@
 import { AddressZero } from "@ethersproject/constants";
-import * as Sdk from "@reservoir0x/sdk";
-import { getReferrer } from "@reservoir0x/sdk/dist/utils";
+import * as Sdk from "@0xlol/sdk";
+import { getReferrer } from "@0xlol/sdk/dist/utils";
 import pLimit from "p-limit";
 
 import { baseProvider } from "@/common/provider";

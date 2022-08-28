@@ -1,5 +1,5 @@
-import * as Sdk from "@reservoir0x/sdk";
-import { BaseBuildParams } from "@reservoir0x/sdk/dist/looks-rare/builders/base";
+import * as Sdk from "@0xlol/sdk";
+import { BaseBuildParams } from "@0xlol/sdk/dist/looks-rare/builders/base";
 import axios from "axios";
 
 import { config } from "@/config/index";

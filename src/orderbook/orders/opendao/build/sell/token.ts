@@ -1,5 +1,5 @@
-import * as Sdk from "@reservoir0x/sdk";
-import { BaseBuilder } from "@reservoir0x/sdk/dist/opendao/builders/base";
+import * as Sdk from "@0xlol/sdk";
+import { BaseBuilder } from "@0xlol/sdk/dist/opendao/builders/base";
 
 import { redb } from "@/common/db";
 import { logger } from "@/common/logger";
