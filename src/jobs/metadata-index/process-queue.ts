@@ -101,7 +101,7 @@ if (config.doBackgroundWork) {
                 }
                 return {
                   key: el.trait_type,
-                  value: String(el.value),
+                  value: el.value,
                   kind,
                 };
               }),
