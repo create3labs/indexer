@@ -3,8 +3,8 @@
 import { AddressZero } from "@ethersproject/constants";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
-import * as Sdk from "@reservoir0x/sdk";
-import { ListingDetails } from "@reservoir0x/sdk/dist/router/types";
+import * as Sdk from "@0xlol/sdk";
+import { ListingDetails } from "@0xlol/sdk/dist/router/types";
 import Joi from "joi";
 
 import { redb } from "@/common/db";

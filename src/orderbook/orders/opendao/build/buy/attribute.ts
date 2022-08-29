@@ -1,7 +1,7 @@
-import * as Sdk from "@reservoir0x/sdk";
-import { BaseBuilder } from "@reservoir0x/sdk/dist/opendao/builders/base";
-import { getBitVectorCalldataSize } from "@reservoir0x/sdk/dist/common/helpers/bit-vector";
-import { getPackedListCalldataSize } from "@reservoir0x/sdk/dist/common/helpers/packed-list";
+import * as Sdk from "@0xlol/sdk";
+import { BaseBuilder } from "@0xlol/sdk/dist/opendao/builders/base";
+import { getBitVectorCalldataSize } from "@0xlol/sdk/dist/common/helpers/bit-vector";
+import { getPackedListCalldataSize } from "@0xlol/sdk/dist/common/helpers/packed-list";
 
 import { redb } from "@/common/db";
 import { bn, fromBuffer } from "@/common/utils";

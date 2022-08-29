@@ -2,7 +2,7 @@ import { redb } from "@/common/db";
 import { Sources } from "@/models/sources";
 import { fromBuffer } from "@/common/utils";
 import { BaseDataSource } from "@/jobs/data-export/data-sources/index";
-import * as Sdk from "@reservoir0x/sdk";
+import * as Sdk from "@0xlol/sdk";
 import { config } from "@/config/index";
 
 export class AsksDataSource extends BaseDataSource {

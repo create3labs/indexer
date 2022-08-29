@@ -1,5 +1,5 @@
 import { Interface } from "@ethersproject/abi";
-import { WyvernV2 } from "@reservoir0x/sdk";
+import { WyvernV2 } from "@0xlol/sdk";
 
 import { config } from "@/config/index";
 import { EventData } from "@/events-sync/data";

@@ -3,7 +3,7 @@
 import { BigNumberish } from "@ethersproject/bignumber";
 import { JsonRpcProvider } from "@ethersproject/providers";
 import { simulateTx } from "@georgeroman/evm-tx-simulator";
-import { TxData } from "@reservoir0x/sdk/dist/utils";
+import { TxData } from "@0xlol/sdk/dist/utils";
 
 import { bn } from "@/common/utils";
 import { config } from "@/config/index";

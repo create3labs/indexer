@@ -1,5 +1,5 @@
-import * as Sdk from "@reservoir0x/sdk";
-import { BaseBuildParams } from "@reservoir0x/sdk/dist/x2y2/builders/base";
+import * as Sdk from "@0xlol/sdk";
+import { BaseBuildParams } from "@0xlol/sdk/dist/x2y2/builders/base";
 
 import { redb } from "@/common/db";
 import { now } from "@/common/utils";

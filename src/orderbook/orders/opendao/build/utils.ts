@@ -1,4 +1,4 @@
-import { BaseBuildParams } from "@reservoir0x/sdk/dist/opendao/builders/base";
+import { BaseBuildParams } from "@0xlol/sdk/dist/opendao/builders/base";
 
 import { redb } from "@/common/db";
 import { bn } from "@/common/utils";

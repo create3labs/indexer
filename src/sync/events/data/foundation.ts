@@ -1,5 +1,5 @@
 import { Interface } from "@ethersproject/abi";
-import { Foundation } from "@reservoir0x/sdk";
+import { Foundation } from "@0xlol/sdk";
 
 import { config } from "@/config/index";
 import { EventData } from "@/events-sync/data";

@@ -1,4 +1,4 @@
-import * as Sdk from "@reservoir0x/sdk";
+import * as Sdk from "@0xlol/sdk";
 import cron from "node-cron";
 
 import { logger } from "@/common/logger";
