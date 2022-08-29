@@ -1,6 +1,7 @@
 import { Interface } from "@ethersproject/abi";
 import { EventData } from "@/events-sync/data";
 import { Nouns } from "@0xlol/sdk";
+
 import { config } from "@/config/index";
 
 export const auctionSettled: EventData = {
@@ -13,6 +14,6 @@ export const auctionSettled: EventData = {
       uint256 indexed nounId,
       address winner,
       uint256 amount
-      )`,
+    )`,
   ]),
 };

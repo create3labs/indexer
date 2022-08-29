@@ -1,3 +1,66 @@
+## [5.184.5](https://github.com/reservoirprotocol/indexer/compare/v5.184.4...v5.184.5) (2022-08-29)
+
+
+### Bug Fixes
+
+* price retrieval ([34d4c97](https://github.com/reservoirprotocol/indexer/commit/34d4c976f4a1598e34ea67072ce72484af38a7df))
+
+
+
+## [5.184.4](https://github.com/reservoirprotocol/indexer/compare/v5.184.3...v5.184.4) (2022-08-29)
+
+
+### Performance Improvements
+
+* various tweaks for backfilling performance ([120fa4e](https://github.com/reservoirprotocol/indexer/commit/120fa4ea0b0c4668a279f49e013e0216af7fd3a3))
+
+
+
+## [5.184.3](https://github.com/reservoirprotocol/indexer/compare/v5.184.2...v5.184.3) (2022-08-29)
+
+
+### Performance Improvements
+
+* restrict backfilling to selected processes ([00887b5](https://github.com/reservoirprotocol/indexer/commit/00887b5b387dde35efff3c969b99be011aba0ddc))
+
+
+
+## [5.184.2](https://github.com/reservoirprotocol/indexer/compare/v5.184.1...v5.184.2) (2022-08-29)
+
+
+### Bug Fixes
+
+* set a default source for cryptopunks ([ff05728](https://github.com/reservoirprotocol/indexer/commit/ff057289dca8bf277b9c0f4f17ad112a55d118e7))
+
+
+
+## [5.184.1](https://github.com/reservoirprotocol/indexer/compare/v5.184.0...v5.184.1) (2022-08-29)
+
+
+### Bug Fixes
+
+* execute buy v4 referrer fees ([137efd7](https://github.com/reservoirprotocol/indexer/commit/137efd7312c6085df68535ac2467c4a34ac75840))
+
+
+
+# [5.184.0](https://github.com/reservoirprotocol/indexer/compare/v5.183.6...v5.184.0) (2022-08-29)
+
+
+### Features
+
+* add support for direct filling x2y2 bids ([0709abd](https://github.com/reservoirprotocol/indexer/commit/0709abdb2252d13b1fa46b4d493792113a69e6a2))
+
+
+
+## [5.183.6](https://github.com/reservoirprotocol/indexer/compare/v5.183.5...v5.183.6) (2022-08-29)
+
+
+### Bug Fixes
+
+* collection floor sale change computation ([495acb4](https://github.com/reservoirprotocol/indexer/commit/495acb4c9b1e49de045c4be57f838159a020cd4a))
+
+
+
 ## [5.183.5](https://github.com/reservoirprotocol/indexer/compare/v5.183.4...v5.183.5) (2022-08-28)
 
 
