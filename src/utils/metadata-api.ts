@@ -65,10 +65,12 @@ export class MetadataApi {
           bannerImageUrl: "",
           twitterUsername: "polychainmon",
         },
-        royalties: {
-          bps: 0,
-          recipient: null,
-        },
+        royalties: [
+          {
+            bps: 500,
+            recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+          },
+        ],
         contract: "0x2279b7a0a67db372996a5fab50d91eaa73d2ebe6",
         tokenIdRange: null,
         tokenSetId: "0x2279b7a0a67db372996a5fab50d91eaa73d2ebe6",

@@ -2,10 +2,10 @@
 # yarn lockfile v1
 
 
-"@0xlol/sdk@^0.0.160":
-  version "0.0.160"
-  resolved "https://registry.npmjs.org/@0xlol/sdk/-/sdk-0.0.160.tgz"
-  integrity sha512-BU7XLGF+LCrfZFybNO16ozlubN4fwYAPwXtySx/4t1Yn2YJYdm28+0wz+sdmgUlS97hfekTLORCyqcKdyZgqog==
+"@0xlol/sdk@^0.0.16-0.1":
+  version "0.0.16-0.1"
+  resolved "https://registry.yarnpkg.com/@0xlol/sdk/-/sdk-0.0.16-0.1.tgz#8136a013481286167497b6c7f1f72d9221fed34d"
+  integrity sha512-EuQc8GxB9U8Ehs8wlp2CVxozCwc7NIv7//GD5CAqOAZHghisks8Icl5fK32SmhXaBmtp4k/oGMFKBLh89BYrkQ==
   dependencies:
     axios "^0.27.2"
     ethers "^5.6.8"
