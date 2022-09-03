@@ -113,7 +113,13 @@ export const start = async (): Promise<void> => {
           },
         },
         schemes: ["https", "http"],
-        host: `${config.chainId === 1 ? "api" : `api-${getNetworkName()}`}.reservoir.tools`,
+        host: `${
+          process.env.LOCAL_MODE === "true"
+            ? `localhost:3000`
+            : config.chainId === 1
+            ? "api.reservoir.tools"
+            : `api-${getNetworkName()}.reservoir.tools`
+        }`,
         cors: true,
         tryItOutEnabled: true,
         documentationPath: "/",
