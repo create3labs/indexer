@@ -43,5 +43,5 @@ jobs:
           # todo / remove later
           cat .env
       - run: yarn run build
-#      - name: Build image(s)
-#        run: docker compose -f docker-compose.plus-node.yml build
+      - name: Build image(s)
+        run: docker compose -f docker-compose.plus-node.yml build
