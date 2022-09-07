@@ -51,3 +51,5 @@ jobs:
           token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
       - name: Log in to DO Container Registry
         run: doctl registry login --expiry-seconds 600
+      - name: Push image to DO Container Registry
+        run: docker compose -f docker-compose.plus-node.yaml push
