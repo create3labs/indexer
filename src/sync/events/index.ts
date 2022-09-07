@@ -176,6 +176,11 @@ export const syncEvents = async (
             // Erc721
 
             case "erc721-transfer": {
+              if (
+                process.env.WL_ADDRESS &&
+                process.env.WL_ADDRESS.toLowerCase() !== log.address.toLowerCase()
+              )
+                break;
               const parsedLog = eventData.abi.parseLog(log);
               const from = parsedLog.args["from"].toLowerCase();
               const to = parsedLog.args["to"].toLowerCase();
@@ -250,6 +255,11 @@ export const syncEvents = async (
             // Erc1155
 
             case "erc1155-transfer-single": {
+              if (
+                process.env.WL_ADDRESS &&
+                process.env.WL_ADDRESS.toLowerCase() !== log.address.toLowerCase()
+              )
+                break;
               const parsedLog = eventData.abi.parseLog(log);
               const from = parsedLog.args["from"].toLowerCase();
               const to = parsedLog.args["to"].toLowerCase();
@@ -323,6 +333,11 @@ export const syncEvents = async (
             }
 
             case "erc1155-transfer-batch": {
+              if (
+                process.env.WL_ADDRESS &&
+                process.env.WL_ADDRESS.toLowerCase() !== log.address.toLowerCase()
+              )
+                break;
               const parsedLog = eventData.abi.parseLog(log);
               const from = parsedLog.args["from"].toLowerCase();
               const to = parsedLog.args["to"].toLowerCase();
@@ -404,6 +419,11 @@ export const syncEvents = async (
             // Erc721/Erc1155 common
 
             case "erc721/1155-approval-for-all": {
+              if (
+                process.env.WL_ADDRESS &&
+                process.env.WL_ADDRESS.toLowerCase() !== log.address.toLowerCase()
+              )
+                break;
               const parsedLog = eventData.abi.parseLog(log);
               const owner = parsedLog.args["owner"].toLowerCase();
               const operator = parsedLog.args["operator"].toLowerCase();
