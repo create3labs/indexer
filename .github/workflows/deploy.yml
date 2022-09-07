@@ -35,7 +35,7 @@ jobs:
           echo "METADATA_INDEXING_METHOD=contract" >> .env
           echo "WRAPPED_NATIVE=0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d" >> .env
           echo "USDC=0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83" >> .env
-          echo "ROUTER=0x5964fe9b31c332768f6c9037951c60ae871cf44b" >> .env
+          echo "ROUTER=0xCDb0839bbfd718b38d4F3fa9a5b2570162B5A6DE" >> .env
           echo "SEAPORT_EXCHANGE=0x00000000006c3852cbEf3e08E8dF289169EdE581" >> .env
           echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >> .env
           echo "METADATA_API_BASE_URL=x" >> .env
@@ -44,4 +44,4 @@ jobs:
           cat .env
       - run: yarn run build
       - name: Build image(s)
-        run: docker compose -f docker-compose.plus-node.yml build
+        run: docker compose -f docker-compose.plus-node.yaml build
