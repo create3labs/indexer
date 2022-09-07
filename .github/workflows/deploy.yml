@@ -22,7 +22,7 @@ jobs:
           echo "PORT=3000" >> .env
           echo "CHAIN_ID=100" >> .env
           # todo / extract to .env
-          echo "ADMIN_API_KEY=792f3f4f-0c72-4333-855f-a2ff7096f1db" >> .env
+          echo "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" >> .env
           echo "BASE_NETWORK_HTTP_URL=https://rpc.ankr.com/gnosis" >> .env
           echo "BASE_NETWORK_WS_URL=wss://rpc.gnosischain.com/wss" >> .env
           echo "DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/postgres?schema=public" >> .env
@@ -45,3 +45,7 @@ jobs:
       - run: yarn run build
       - name: Build image(s)
         run: docker compose -f docker-compose.plus-node.yaml build
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
