@@ -46,7 +46,7 @@ export const getNetworkSettings = (): NetworkSettings => {
     enableReorgCheck: true,
     realtimeSyncFrequencySeconds: 15,
     realtimeSyncMaxBlockLag: 16,
-    backfillBlockBatchSize: 16,
+    backfillBlockBatchSize: 256,
     metadataMintDelay: 120,
     enableMetadataAutoRefresh: false,
     washTradingExcludedContracts: [],
@@ -154,6 +154,34 @@ export const getNetworkSettings = (): NetworkSettings => {
                   'ETH',
                   18,
                   '{}'
+                ) ON CONFLICT DO NOTHING
+              `
+            ),
+          ]);
+        },
+      };
+    } // BSC Testnet
+    case 97: {
+      return {
+        ...defaultNetworkSettings,
+        backfillBlockBatchSize: 490,
+        onStartup: async () => {
+          // Insert the native currency
+          await Promise.all([
+            idb.none(
+              `
+                INSERT INTO currencies (
+                  contract,
+                  name,
+                  symbol,
+                  decimals,
+                  metadata
+                ) VALUES (
+                  '\\x0000000000000000000000000000000000000000',
+                  'BNB',
+                  'BNB',
+                  18,
+                  '{"coingeckoCurrencyId": "bnb"}'
                 ) ON CONFLICT DO NOTHING
               `
             ),
