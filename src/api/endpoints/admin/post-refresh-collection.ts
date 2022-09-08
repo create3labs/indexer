@@ -13,7 +13,6 @@ import * as collectionUpdatesMetadata from "@/jobs/collection-updates/metadata-q
 import * as metadataIndexFetch from "@/jobs/metadata-index/fetch-queue";
 import * as orderFixes from "@/jobs/order-fixes/queue";
 import { Collections } from "@/models/collections";
-import { OpenseaIndexerApi } from "@/utils/opensea-indexer-api";
 
 export const postRefreshCollectionOptions: RouteOptions = {
   description: "Refresh a collection's orders and metadata",
@@ -82,7 +81,7 @@ export const postRefreshCollectionOptions: RouteOptions = {
       await orderFixes.addToQueue([{ by: "contract", data: { contract: collection.contract } }]);
 
       // Refresh contract orders from OpenSea
-      await OpenseaIndexerApi.fastContractSync(collection.contract);
+      // await OpenseaIndexerApi.fastContractSync(collection.contract);
 
       // Refresh the collection tokens metadata
       await metadataIndexFetch.addToQueue(

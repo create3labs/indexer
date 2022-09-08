@@ -8,6 +8,7 @@ import slugify from "slugify";
 import { baseProvider } from "@/common/provider";
 import { config } from "@/config/index";
 import { getNetworkName } from "@/config/network";
+import { logger } from "@/common/logger";
 
 export class MetadataApi {
   public static async getCollectionMetadata(
@@ -40,6 +41,29 @@ export class MetadataApi {
         tokenSetId: `contract:${contract}`,
       };
     } else {
+      let data: any = {
+        slug: slugify(contract, { lower: true }),
+        name: "Coming Soon",
+        metadata: {
+          imageUrl: "",
+          discordUrl: "",
+          description: "",
+          externalUrl: "",
+          bannerImageUrl: "",
+          twitterUsername: "",
+        },
+        royalties: [],
+      };
+
+      try {
+        const res = await axios.get(
+          `https://raw.githubusercontent.com/create3labs/nft-metadata/main/metadata/100/${contract.toLowerCase()}/index.json`
+        );
+        data = res.data;
+      } catch (e: any) {
+        logger.error("error catching metadata", e);
+      }
+
       const collection: {
         id: string;
         slug: string;
@@ -52,22 +76,22 @@ export class MetadataApi {
         tokenSetId: string;
         isFallback?: boolean;
       } = {
-        id: contract,
-        slug: slugify(contract, { lower: true }),
-        name: "Coming Soon",
+        id: contract.toLowerCase(),
+        slug: slugify(data?.name, { lower: true }),
+        name: data?.name,
         community: null,
         metadata: {
-          imageUrl: "",
-          discordUrl: "https://discord.com/invite/polychainmonsters",
-          description: "",
+          imageUrl: data?.metadata?.imageUrl,
+          discordUrl: "",
+          description: data?.metadata?.description,
           externalUrl: "",
           bannerImageUrl: "",
           twitterUsername: "",
         },
-        royalties: [],
-        contract: contract ?? "",
+        royalties: data?.royalties ?? [],
+        contract: contract,
         tokenIdRange: null,
-        tokenSetId: "",
+        tokenSetId: contract,
       };
 
       if (collection.isFallback && !options?.allowFallback) {

@@ -2,8 +2,9 @@
 node_modules
 
 # Secrets
-.env.local
 .env
+.env.local
+.env.bscTest
 
 # Build
 dist
