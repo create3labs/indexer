@@ -5,6 +5,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.expose: "True"
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -12,9 +13,9 @@ items:
       name: node
     spec:
       ports:
-        - name: "7979"
-          port: 7979
-          targetPort: 7979
+        - name: "80"
+          port: 80
+          targetPort: 80
       selector:
         io.kompose.service: node
     status:
@@ -24,6 +25,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.type: clusterip
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -36,6 +38,7 @@ items:
           targetPort: 80
       selector:
         io.kompose.service: pgadmin
+      type: ClusterIP
     status:
       loadBalancer: {}
   - apiVersion: v1
@@ -43,6 +46,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.type: clusterip
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -55,6 +59,7 @@ items:
           targetPort: 5432
       selector:
         io.kompose.service: postgres
+      type: ClusterIP
     status:
       loadBalancer: {}
   - apiVersion: v1
@@ -62,6 +67,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.type: clusterip
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -74,6 +80,7 @@ items:
           targetPort: 6379
       selector:
         io.kompose.service: redis
+      type: ClusterIP
     status:
       loadBalancer: {}
   - apiVersion: apps/v1
@@ -81,6 +88,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.expose: "True"
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -96,6 +104,7 @@ items:
         metadata:
           annotations:
             kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+            kompose.service.expose: "True"
             kompose.version: 1.26.1 (HEAD)
           creationTimestamp: null
           labels:
@@ -151,11 +160,35 @@ items:
               image: '/node:'
               name: node
               ports:
-                - containerPort: 7979
+                - containerPort: 80
               resources: {}
               workingDir: /indexer
           restartPolicy: Always
     status: {}
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.expose: "True"
+        kompose.version: 1.26.1 (HEAD)
+      creationTimestamp: null
+      labels:
+        io.kompose.service: node
+      name: node
+    spec:
+      rules:
+        - http:
+            paths:
+              - backend:
+                  service:
+                    name: node
+                    port:
+                      number: 80
+                path: /
+                pathType: Prefix
+    status:
+      loadBalancer: {}
   - apiVersion: networking.k8s.io/v1
     kind: NetworkPolicy
     metadata:
@@ -175,6 +208,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.type: clusterip
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -190,6 +224,7 @@ items:
         metadata:
           annotations:
             kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+            kompose.service.type: clusterip
             kompose.version: 1.26.1 (HEAD)
           creationTimestamp: null
           labels:
@@ -205,7 +240,7 @@ items:
                   value: pgadmin4@pgadmin.org
                 - name: PGADMIN_DEFAULT_PASSWORD
                   value: admin
-              image: '/pgamin:'
+              image: dpage/pgadmin4
               name: pgadmin-container
               ports:
                 - containerPort: 80
@@ -232,6 +267,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.type: clusterip
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -247,6 +283,7 @@ items:
         metadata:
           annotations:
             kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+            kompose.service.type: clusterip
             kompose.version: 1.26.1 (HEAD)
           creationTimestamp: null
           labels:
@@ -260,7 +297,7 @@ items:
                   value: password
                 - name: POSTGRES_USER
                   value: postgres
-              image: '/postgres:'
+              image: postgres:13.2
               name: postgres
               ports:
                 - containerPort: 5432
@@ -272,6 +309,7 @@ items:
     metadata:
       annotations:
         kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+        kompose.service.type: clusterip
         kompose.version: 1.26.1 (HEAD)
       creationTimestamp: null
       labels:
@@ -287,6 +325,7 @@ items:
         metadata:
           annotations:
             kompose.cmd: kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+            kompose.service.type: clusterip
             kompose.version: 1.26.1 (HEAD)
           creationTimestamp: null
           labels:
@@ -299,7 +338,7 @@ items:
                 - sh
                 - -c
                 - redis-server --requirepass password
-              image: '/redis:'
+              image: redis:6.2.2
               name: redis
               ports:
                 - containerPort: 6379
