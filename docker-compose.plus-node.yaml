@@ -2,7 +2,7 @@ version: "2"
 
 services:
   postgres:
-    image: ${REGISTRY}/postgres:${TAG}
+    image: ${REGISTRY}/postgres
     extends:
       file: docker-compose.yaml
       service: postgres
@@ -10,7 +10,7 @@ services:
       - service-net
 
   pgadmin:
-    image: ${REGISTRY}/pgamin:${TAG}
+    image: ${REGISTRY}/pgamin
     extends:
       file: docker-compose.yaml
       service: pgadmin
@@ -18,7 +18,7 @@ services:
       - service-net
 
   redis:
-    image: ${REGISTRY}/redis:${TAG}
+    image: ${REGISTRY}/redis
     extends:
       file: docker-compose.yaml
       service: redis
