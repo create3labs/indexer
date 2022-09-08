@@ -46,8 +46,17 @@ services:
     networks:
       - service-net
     labels:
-      kompose.service.type: nodeport
-      kompose.service.nodeport.port: "31000"
+      kompose.service.type: clusterip
+
+  nginx:
+    image: nginx
+    ports:
+      - "5000:5000"
+    cap_add:
+      - ALL
+    container_name: nginx
+    labels:
+      kompose.service.type: loadbalancer
 
 networks:
   local:
