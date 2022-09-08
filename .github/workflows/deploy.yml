@@ -45,8 +45,12 @@ jobs:
           echo "METADATA_API_BASE_URL=x" >> .env
           echo "WL_ADDRESS=0x2dF3556BE91d2715a36DcbB5aF3ad2866Cf7B33C" >> .env
       - run: yarn run build
+      - name: Set tag env
+        run: echo "TAG=$(echo $GITHUB_SHA | head -c7)" >> $GITHUB_ENV
+      - name: Set registry env
+        run: echo "REGISTRY=${{ secrets.DIGITALOCEAN_REGISTRY }}" >> $GITHUB_ENV
       - name: Build image(s)
-        run: TAG=$(echo $GITHUB_SHA) && docker compose -f docker-compose.plus-node.yaml build
+        run: docker compose -f docker-compose.plus-node.yaml build
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
