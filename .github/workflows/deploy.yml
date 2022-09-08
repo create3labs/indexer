@@ -1,0 +1,55 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - v5
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        name: Set up Node.js
+        with:
+          node-version: 16
+      - run: yarn
+      - run: |
+          touch .env
+          echo "VERSION=v5" >> .env
+          echo "PORT=3000" >> .env
+          echo "CHAIN_ID=100" >> .env
+          # todo / extract to .env
+          echo "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" >> .env
+          echo "BASE_NETWORK_HTTP_URL=https://rpc.ankr.com/gnosis" >> .env
+          echo "BASE_NETWORK_WS_URL=wss://rpc.gnosischain.com/wss" >> .env
+          echo "DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/postgres?schema=public" >> .env
+          echo "REDIS_URL=redis://redis:password@127.0.0.1:6379" >> .env
+          echo "CATCHUP=1" >> .env
+          echo "MASTER=1" >> .env
+          echo "DO_BACKGROUND_WORK=1" >> .env
+          echo "DO_EVENTS_SYNC_BACKFILL=1" >> .env
+          echo "DISABLE_ORDERS=0" >> .env
+          echo "METADATA_INDEXING_METHOD=contract" >> .env
+          echo "WRAPPED_NATIVE=0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d" >> .env
+          echo "USDC=0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83" >> .env
+          echo "ROUTER=0xCDb0839bbfd718b38d4F3fa9a5b2570162B5A6DE" >> .env
+          echo "SEAPORT_EXCHANGE=0x00000000006c3852cbEf3e08E8dF289169EdE581" >> .env
+          echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >> .env
+          echo "METADATA_API_BASE_URL=x" >> .env
+          echo "WL_ADDRESS=0x2dF3556BE91d2715a36DcbB5aF3ad2866Cf7B33C" >> .env
+          # todo / remove later
+          cat .env
+      - run: yarn run build
+      - name: Build image(s)
+        run: docker compose -f docker-compose.plus-node.yaml build
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Log in to DO Container Registry
+        run: doctl registry login --expiry-seconds 600
+      - name: Push image to DO Container Registry
+        run: docker compose -f docker-compose.plus-node.yaml push

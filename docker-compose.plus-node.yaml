@@ -1,0 +1,46 @@
+version: "2"
+
+services:
+  postgres:
+    extends:
+      file: docker-compose.yaml
+      service: postgres
+    networks:
+      - service-net
+
+  pgadmin:
+    extends:
+      file: docker-compose.yaml
+      service: pgadmin
+    networks:
+      - service-net
+
+  redis:
+    extends:
+      file: docker-compose.yaml
+      service: redis
+    networks:
+      - service-net
+
+  node:
+    build:
+      context: './'
+    working_dir: /indexer
+    command: npm run start
+    env_file:
+      - .env
+    ports:
+      - "7979"
+    restart: always
+    depends_on:
+      - postgres
+      - pgadmin
+      - redis
+    networks:
+      - service-net
+
+networks:
+  local:
+    driver: bridge
+  service-net:
+
