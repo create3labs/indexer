@@ -52,7 +52,7 @@ jobs:
       - name: Set registry env
         run: echo "REGISTRY=${{ secrets.DIGITALOCEAN_REGISTRY }}" >> $GITHUB_ENV
       - name: Build image(s)
-        run: docker compose --force-recreate -f docker-compose.plus-node.yaml build
+        run: docker compose -f docker-compose.plus-node.yaml build
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
