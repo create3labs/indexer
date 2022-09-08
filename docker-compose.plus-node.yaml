@@ -49,11 +49,9 @@ services:
       kompose.service.type: clusterip
 
   nginx:
-    image: nginx
+    image: jwilder/nginx-proxy
     ports:
-      - "5000:5000"
-    cap_add:
-      - ALL
+      - "80:7979"
     container_name: nginx
     labels:
       kompose.service.type: loadbalancer
