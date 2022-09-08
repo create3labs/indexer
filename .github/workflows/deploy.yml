@@ -14,6 +14,8 @@ jobs:
         run: |
           curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.1/kompose-linux-amd64 -o kompose
           chmod +x kompose
+          ls -lah
+          pwd
       - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
         name: Set up Node.js
