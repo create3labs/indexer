@@ -61,7 +61,7 @@ jobs:
         run: docker compose -f docker-compose.plus-node.yaml push
       # Kubernetes related stuff
       - name: Create deployment files
-        run: kompose convert
+        run: ./kompose convert
       - name: Save DigitalOcean kubeconfig with short-lived credentials
         run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.DIGITALOCEAN_CLUSTER_NAME }}
 #      - name: Deploy to Digital Ocean droplet via SSH action
