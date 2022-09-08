@@ -55,6 +55,8 @@ services:
     container_name: nginx
     labels:
       kompose.service.type: loadbalancer
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
 
 networks:
   local:
