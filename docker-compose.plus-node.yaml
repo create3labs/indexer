@@ -7,6 +7,8 @@ services:
       service: postgres
     networks:
       - service-net
+    labels:
+      kompose.service.type: clusterip
 
   pgadmin:
     extends:
@@ -14,6 +16,8 @@ services:
       service: pgadmin
     networks:
       - service-net
+    labels:
+      kompose.service.type: clusterip
 
   redis:
     extends:
@@ -21,6 +25,8 @@ services:
       service: redis
     networks:
       - service-net
+    labels:
+      kompose.service.type: clusterip
 
   node:
     image: ${REGISTRY}/node:${TAG}
@@ -39,6 +45,9 @@ services:
       - redis
     networks:
       - service-net
+    labels:
+      kompose.service.type: nodeport
+      kompose.service.nodeport.port: "7979"
 
 networks:
   local:
