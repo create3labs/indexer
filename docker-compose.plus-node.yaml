@@ -56,7 +56,7 @@ services:
     labels:
       kompose.service.type: loadbalancer
     volumes:
-      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - /vol1
 
 networks:
   local:
