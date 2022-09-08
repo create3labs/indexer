@@ -40,8 +40,6 @@ jobs:
           echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >> .env
           echo "METADATA_API_BASE_URL=x" >> .env
           echo "WL_ADDRESS=0x2dF3556BE91d2715a36DcbB5aF3ad2866Cf7B33C" >> .env
-          # todo / remove later
-          cat .env
       - run: yarn run build
       - name: Build image(s)
         run: docker compose -f docker-compose.plus-node.yaml build
