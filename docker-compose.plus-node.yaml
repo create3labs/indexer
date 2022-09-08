@@ -47,6 +47,7 @@ services:
       - service-net
     labels:
       kompose.service.expose: "True"
+      kompose.service.expose.ingress-class-name: "nginx"
 
 networks:
   local:
