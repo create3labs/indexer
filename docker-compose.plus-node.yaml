@@ -3,6 +3,8 @@ version: "2"
 services:
   postgres:
     image: ${REGISTRY}/postgres
+    build:
+      context: './'
     extends:
       file: docker-compose.yaml
       service: postgres
@@ -11,6 +13,8 @@ services:
 
   pgadmin:
     image: ${REGISTRY}/pgamin
+    build:
+      context: './'
     extends:
       file: docker-compose.yaml
       service: pgadmin
@@ -19,6 +23,8 @@ services:
 
   redis:
     image: ${REGISTRY}/redis
+    build:
+      context: './'
     extends:
       file: docker-compose.yaml
       service: redis
