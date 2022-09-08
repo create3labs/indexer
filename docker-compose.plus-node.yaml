@@ -58,7 +58,10 @@ services:
       kompose.volume.size: 100Mi
       kompose.volume.storage-class-name: do-block-storage
     volumes:
-      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - lb-data
+
+volumes:
+  lb-data:
 
 networks:
   local:
