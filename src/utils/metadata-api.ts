@@ -53,27 +53,21 @@ export class MetadataApi {
         isFallback?: boolean;
       } = {
         id: contract,
-        slug: slugify("Polychain Monsters", { lower: true }),
-        name: "Polychain Monsters",
+        slug: slugify(contract, { lower: true }),
+        name: "Coming Soon",
         community: null,
         metadata: {
           imageUrl: "",
           discordUrl: "https://discord.com/invite/polychainmonsters",
-          description:
-            "Polychain Monsters are beautifully animated digital collectibles with varying scarcities. Each Polymon is backed by a truly unique NFT and can be unpacked with $PMON tokens.",
-          externalUrl: "https://polychainmonsters.com/",
+          description: "",
+          externalUrl: "",
           bannerImageUrl: "",
-          twitterUsername: "polychainmon",
+          twitterUsername: "",
         },
-        royalties: [
-          {
-            bps: 500,
-            recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-          },
-        ],
-        contract: process.env.WL_ADDRESS ?? "",
+        royalties: [],
+        contract: contract ?? "",
         tokenIdRange: null,
-        tokenSetId: process.env.WL_ADDRESS ?? "",
+        tokenSetId: "",
       };
 
       if (collection.isFallback && !options?.allowFallback) {
