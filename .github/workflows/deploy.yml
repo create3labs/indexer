@@ -60,7 +60,7 @@ jobs:
           port: ${{ secrets.DIGITALOCEAN_PORT }}
           script: |
             # Stop all running Docker Containers
-            docker kill $(docker ps -q)
+            docker kill $(docker ps -q) 2>/dev/null && echo $?
             
             # Free up space
             docker system prune -a
