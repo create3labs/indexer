@@ -46,9 +46,7 @@ jobs:
           echo "WL_ADDRESS=0x2dF3556BE91d2715a36DcbB5aF3ad2866Cf7B33C" >> .env
       - run: yarn run build
       - name: Build image(s)
-        run: docker compose -f docker-compose.plus-node.yaml build
-        env:
-          TAG: $(echo $GITHUB_SHA)
+        run: TAG=$(echo $GITHUB_SHA) && docker compose -f docker-compose.plus-node.yaml build
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
