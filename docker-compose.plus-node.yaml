@@ -46,8 +46,7 @@ services:
     networks:
       - service-net
     labels:
-      kompose.service.expose: "True"
-      kompose.service.expose.ingress-class-name: "nginx"
+      kompose.service.type: "loadbalancer"
 
 networks:
   local:
