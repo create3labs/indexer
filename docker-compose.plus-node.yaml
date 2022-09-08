@@ -37,6 +37,7 @@ services:
     env_file:
       - .env
     ports:
+      - "80"
       - "7979"
     restart: always
     depends_on:
@@ -46,22 +47,7 @@ services:
     networks:
       - service-net
     labels:
-      kompose.service.type: clusterip
-
-  nginx:
-    image: jwilder/nginx-proxy
-    ports:
-      - "80:7979"
-    container_name: nginx
-    labels:
-      kompose.service.type: loadbalancer
-      kompose.volume.size: 100Mi
-      kompose.volume.storage-class-name: do-block-storage
-    volumes:
-      - lb-data
-
-volumes:
-  lb-data:
+      kompose.service.expose: "True"
 
 networks:
   local:
