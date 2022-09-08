@@ -19,7 +19,7 @@ jobs:
       - run: |
           touch .env
           echo "VERSION=v5" >> .env
-          echo "PORT=32000" >> .env
+          echo "PORT=31000" >> .env
           echo "CHAIN_ID=100" >> .env
           # todo / extract to .env
           echo "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" >> .env
