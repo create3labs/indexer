@@ -2,6 +2,7 @@ version: "2"
 
 services:
   postgres:
+    image: postgres:${TAG}
     extends:
       file: docker-compose.yaml
       service: postgres
@@ -9,6 +10,7 @@ services:
       - service-net
 
   pgadmin:
+    image: postgres:${TAG}
     extends:
       file: docker-compose.yaml
       service: pgadmin
@@ -16,6 +18,7 @@ services:
       - service-net
 
   redis:
+    image: postgres:${TAG}
     extends:
       file: docker-compose.yaml
       service: redis
@@ -23,6 +26,7 @@ services:
       - service-net
 
   node:
+    image: postgres:${TAG}
     build:
       context: './'
     working_dir: /indexer
