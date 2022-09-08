@@ -10,12 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install kompose
-        run: |
-          curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.1/kompose-linux-amd64 -o kompose
-          chmod +x kompose
-          ls -lah
-          pwd
       - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
         name: Set up Node.js
@@ -47,6 +41,12 @@ jobs:
           echo "METADATA_API_BASE_URL=x" >> .env
           echo "WL_ADDRESS=0x2dF3556BE91d2715a36DcbB5aF3ad2866Cf7B33C" >> .env
       - run: yarn run build
+      - name: Install kompose
+        run: |
+          curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.1/kompose-linux-amd64 -o kompose
+          chmod +x kompose
+          ls -lah
+          pwd
       - name: Set tag env
         run: echo "TAG=$(echo $GITHUB_SHA | head -c7)" >> $GITHUB_ENV
       - name: Set registry env
