@@ -47,7 +47,7 @@ services:
       - service-net
     labels:
       kompose.service.type: nodeport
-      kompose.service.nodeport.port: "7979"
+      kompose.service.nodeport.port: "33000"
 
 networks:
   local:
