@@ -63,7 +63,7 @@ jobs:
             docker kill $(docker ps -q) 2>/dev/null && echo $?
             
             # Free up space
-            docker system prune -a
+            docker system prune -a -f
 
             # Login to DO Container Registry
             doctl registry login --access-token ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
