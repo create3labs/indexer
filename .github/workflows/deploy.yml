@@ -25,8 +25,8 @@ jobs:
           echo "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" >> .env
           echo "BASE_NETWORK_HTTP_URL=https://rpc.ankr.com/gnosis" >> .env
           echo "BASE_NETWORK_WS_URL=wss://rpc.gnosischain.com/wss" >> .env
-          echo "DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/postgres?schema=public" >> .env
-          echo "REDIS_URL=redis://redis:password@127.0.0.1:6379" >> .env
+          echo "DATABASE_URL=postgresql://postgres:password@postgres:5432/postgres?schema=public" >> .env
+          echo "REDIS_URL=redis://redis:password@redis:6379" >> .env
           echo "CATCHUP=1" >> .env
           echo "MASTER=1" >> .env
           echo "DO_BACKGROUND_WORK=1" >> .env
