@@ -37,7 +37,8 @@ services:
     env_file:
       - .env
     ports:
-      - "80:80"
+      - "80:31987"
+      - "31987:31987"
     restart: always
     depends_on:
       - postgres
@@ -47,6 +48,7 @@ services:
       - service-net
     labels:
       kompose.service.type: "loadbalancer"
+      kompose.service.nodeport.port: "31987"
 
 networks:
   local:
