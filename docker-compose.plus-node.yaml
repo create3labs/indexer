@@ -48,7 +48,6 @@ services:
       - service-net
     labels:
       kompose.service.type: "loadbalancer"
-      kompose.service.nodeport.port: "31987"
 
 networks:
   local:
