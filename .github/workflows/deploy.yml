@@ -52,7 +52,7 @@ jobs:
       - name: Set registry env
         run: echo "REGISTRY=${{ secrets.DIGITALOCEAN_REGISTRY }}" >> $GITHUB_ENV
       - name: Build image(s)
-        run: docker compose -f docker-compose.plus-node.yaml build
+        run: docker compose -f docker-compose.kubernetes.yaml build
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
@@ -60,13 +60,13 @@ jobs:
       - name: Log in to DO Container Registry
         run: doctl registry login --expiry-seconds 1200
       - name: Push image to DO Container Registry
-        run: docker compose -f docker-compose.plus-node.yaml push
+        run: docker compose -f docker-compose.kubernetes.yaml push
       # Kubernetes related stuff
       - name: Create deployment files
         run: |
           pwd
           ls -lah
-          ./kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+          ./kompose convert --file docker-compose.kubernetes.yaml --out deployment.yml
       - name: Save DigitalOcean kubeconfig with short-lived credentials
         run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.DIGITALOCEAN_CLUSTER_NAME }}
       - name: Deploy to DigitalOcean Kubernetes
