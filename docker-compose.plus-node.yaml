@@ -5,6 +5,7 @@ services:
     extends:
       file: docker-compose.yaml
       service: postgres
+    networks: []
     labels:
       kompose.service.type: clusterip
 
@@ -12,6 +13,7 @@ services:
     extends:
       file: docker-compose.yaml
       service: pgadmin
+    networks: []
     labels:
       kompose.service.type: clusterip
 
@@ -19,11 +21,13 @@ services:
     extends:
       file: docker-compose.yaml
       service: redis
+    networks: []
     labels:
       kompose.service.type: clusterip
 
   node:
     image: ${REGISTRY}/node:${TAG}
+    networks: []
     build:
       context: './'
     working_dir: /indexer
@@ -39,6 +43,3 @@ services:
       - redis
     labels:
       kompose.service.type: "loadbalancer"
-
-networks:
-  local:
