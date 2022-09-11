@@ -74,9 +74,9 @@
     "name": "ZenCon Marketplace",
     "address": "0xCDb0839bbfd718b38d4F3fa9a5b2570162B5A6DE",
     "data": {
-      "icon": "https://raw.githubusercontent.com/reservoirprotocol/indexer/v5/src/models/sources/gmoney-logo.png",
-      "tokenUrlMainnet": "https://gmoney.market/${contract}/${tokenId}",
-      "tokenUrlRinkeby": "https://gmoney.market/${contract}/${tokenId}"
+      "icon": "https://raw.githubusercontent.com/create3labs/indexer/v5/src/models/sources/horizen.png",
+      "tokenUrlMainnet": "https://zencon-marketplace.netlify.app/${contract}/${tokenId}",
+      "tokenUrlRinkeby": "https://zencon-marketplace.netlify.app/${contract}/${tokenId}"
     }
   }
 }
