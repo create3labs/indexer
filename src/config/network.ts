@@ -225,6 +225,37 @@ export const getNetworkSettings = (): NetworkSettings => {
         },
       };
     }
+    // Gnosis
+    case 100:
+      return {
+        ...defaultNetworkSettings,
+        backfillBlockBatchSize: 128,
+        coingecko: {
+          networkId: "xdai",
+        },
+        onStartup: async () => {
+          // Insert the native currency
+          await Promise.all([
+            idb.none(
+              `
+                INSERT INTO currencies (
+                  contract,
+                  name,
+                  symbol,
+                  decimals,
+                  metadata
+                ) VALUES (
+                  '\\x0000000000000000000000000000000000000000',
+                  'Ether',
+                  'ETH',
+                  18,
+                  '{}'
+                ) ON CONFLICT DO NOTHING
+              `
+            ),
+          ]);
+        },
+      };
     // Default
     default:
       return {

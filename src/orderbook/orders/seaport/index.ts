@@ -97,7 +97,8 @@ export const save = async (
       // Check: sell order has Eth as payment token
       if (
         info.side === "sell" &&
-        info.paymentToken !== Sdk.Common.Addresses.Eth[config.chainId] &&
+        info.paymentToken.toLowerCase() !==
+          Sdk.Common.Addresses.Eth[config.chainId].toLowerCase() &&
         !isReservoir
       ) {
         return results.push({
@@ -107,7 +108,10 @@ export const save = async (
       }
 
       // Check: buy order has Weth as payment token
-      if (info.side === "buy" && info.paymentToken !== Sdk.Common.Addresses.Weth[config.chainId]) {
+      if (
+        info.side === "buy" &&
+        info.paymentToken.toLowerCase() !== Sdk.Common.Addresses.Weth[config.chainId].toLowerCase()
+      ) {
         return results.push({
           id,
           status: "unsupported-payment-token",
