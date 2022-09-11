@@ -2,28 +2,31 @@ version: "2"
 
 services:
   postgres:
-    image: ${REGISTRY}/postgres:${TAG}
     extends:
       file: docker-compose.yaml
       service: postgres
     networks:
       - service-net
+    labels:
+      kompose.service.type: clusterip
 
   pgadmin:
-    image: ${REGISTRY}/pgamin:${TAG}
     extends:
       file: docker-compose.yaml
       service: pgadmin
     networks:
       - service-net
+    labels:
+      kompose.service.type: clusterip
 
   redis:
-    image: ${REGISTRY}/redis:${TAG}
     extends:
       file: docker-compose.yaml
       service: redis
     networks:
       - service-net
+    labels:
+      kompose.service.type: clusterip
 
   node:
     image: ${REGISTRY}/node:${TAG}
@@ -34,7 +37,7 @@ services:
     env_file:
       - .env
     ports:
-      - "7979"
+      - "80:80"
     restart: always
     depends_on:
       - postgres
@@ -42,6 +45,8 @@ services:
       - redis
     networks:
       - service-net
+    labels:
+      kompose.service.type: "loadbalancer"
 
 networks:
   local:

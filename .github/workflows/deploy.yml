@@ -10,10 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install kompose
-        run: |
-          curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.1/kompose-linux-amd64 -o kompose
-          chmod +x kompose
       - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
         name: Set up Node.js
@@ -23,14 +19,14 @@ jobs:
       - run: |
           touch .env
           echo "VERSION=v5" >> .env
-          echo "PORT=3000" >> .env
+          echo "PORT=80" >> .env
           echo "CHAIN_ID=100" >> .env
           # todo / extract to .env
           echo "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" >> .env
           echo "BASE_NETWORK_HTTP_URL=https://rpc.ankr.com/gnosis" >> .env
           echo "BASE_NETWORK_WS_URL=wss://rpc.gnosischain.com/wss" >> .env
-          echo "DATABASE_URL=postgresql://postgres:password@127.0.0.1:5432/postgres?schema=public" >> .env
-          echo "REDIS_URL=redis://redis:password@127.0.0.1:6379" >> .env
+          echo "DATABASE_URL=postgresql://postgres:password@postgres:5432/postgres?schema=public" >> .env
+          echo "REDIS_URL=redis://redis:password@redis:6379" >> .env
           echo "CATCHUP=1" >> .env
           echo "MASTER=1" >> .env
           echo "DO_BACKGROUND_WORK=1" >> .env
@@ -45,6 +41,12 @@ jobs:
           echo "METADATA_API_BASE_URL=x" >> .env
           echo "WL_ADDRESS=0x2dF3556BE91d2715a36DcbB5aF3ad2866Cf7B33C" >> .env
       - run: yarn run build
+      - name: Install kompose
+        run: |
+          curl -L https://github.com/kubernetes/kompose/releases/download/v1.26.1/kompose-linux-amd64 -o kompose
+          chmod +x kompose
+          ls -lah
+          pwd
       - name: Set tag env
         run: echo "TAG=$(echo $GITHUB_SHA | head -c7)" >> $GITHUB_ENV
       - name: Set registry env
@@ -59,25 +61,16 @@ jobs:
         run: doctl registry login --expiry-seconds 1200
       - name: Push image to DO Container Registry
         run: docker compose -f docker-compose.plus-node.yaml push
-      # Kubernetes stuff
-#      - name: Deploy to Digital Ocean droplet via SSH action
-#        uses: appleboy/ssh-action@master
-#        with:
-#          host: ${{ secrets.DIGITALOCEAN_HOST }}
-#          username: ${{ secrets.DIGITALOCEAN_USERNAME }}
-#          key: ${{ secrets.DIGITALOCEAN_SSH_PRIVATE_KEY }}
-#          port: ${{ secrets.DIGITALOCEAN_PORT }}
-#          script: |
-#            # Stop all running Docker Containers
-#            docker kill $(docker ps -q) 2>/dev/null && echo $?
-#
-#            # Free up space
-#            docker system prune -a -f
-#
-#            # Login to DO Container Registry
-#            doctl registry login --access-token ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
-#
-#            # Pull the Docker Image(s)
-#            docker pull
-#
-
+      # Kubernetes related stuff
+      - name: Create deployment files
+        run: |
+          pwd
+          ls -lah
+          ./kompose convert --file docker-compose.plus-node.yaml --out deployment.yml
+      - name: Save DigitalOcean kubeconfig with short-lived credentials
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.DIGITALOCEAN_CLUSTER_NAME }}
+      - name: Deploy to DigitalOcean Kubernetes
+        run: kubectl apply -f $GITHUB_WORKSPACE/deployment.yml
+      - name: Verify deployment
+        # Checking redis as example deployment, todo check others
+        run: kubectl rollout status deployment/redis
