@@ -21,3 +21,4 @@ postgres/
 
 #Kubernetes
 deployment.json
+deployment.yml

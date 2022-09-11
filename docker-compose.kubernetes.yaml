@@ -1,24 +1,30 @@
-version: "2"
+version: "3"
 
 services:
   postgres:
-    extends:
-      file: docker-compose.yaml
-      service: postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    ports:
+      - 5432:5432
     labels:
       kompose.service.type: clusterip
 
   pgadmin:
-    extends:
-      file: docker-compose.yaml
-      service: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    tty: true
     labels:
       kompose.service.type: clusterip
 
   redis:
-    extends:
-      file: docker-compose.yaml
-      service: redis
+    command: sh -c "redis-server --requirepass password"
+    ports:
+      - 6379:6379
     labels:
       kompose.service.type: clusterip
 
@@ -39,7 +45,3 @@ services:
       - redis
     labels:
       kompose.service.type: "loadbalancer"
-
-networks:
-  local:
-    driver: local
