@@ -2,6 +2,7 @@ version: "3"
 
 services:
   postgres:
+    image: postgres:13.2
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password
@@ -11,6 +12,7 @@ services:
       kompose.service.type: clusterip
 
   pgadmin:
+    image: dpage/pgadmin4
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-pgadmin4@pgadmin.org}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
@@ -22,6 +24,7 @@ services:
       kompose.service.type: clusterip
 
   redis:
+    image: redis:6.2.2
     command: sh -c "redis-server --requirepass password"
     ports:
       - 6379:6379
