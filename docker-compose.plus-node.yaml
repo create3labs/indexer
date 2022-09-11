@@ -40,3 +40,5 @@ services:
     labels:
       kompose.service.type: "loadbalancer"
 
+networks:
+  local:
