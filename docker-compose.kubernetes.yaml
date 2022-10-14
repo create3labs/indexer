@@ -10,6 +10,8 @@ services:
       - 5432:5432
     labels:
       kompose.service.type: clusterip
+      kompose.volume.storage-class-name: do-block-storage
+      kompose.volume.size: "40Gi"
 
   pgadmin:
     image: dpage/pgadmin4
@@ -22,6 +24,8 @@ services:
     tty: true
     labels:
       kompose.service.type: clusterip
+      kompose.volume.storage-class-name: do-block-storage
+      kompose.volume.size: "10Gi"
 
   redis:
     image: redis:6.2.2
@@ -30,6 +34,8 @@ services:
       - 6379:6379
     labels:
       kompose.service.type: clusterip
+      kompose.volume.storage-class-name: do-block-storage
+      kompose.volume.size: "20Gi"
 
   node:
     image: ${REGISTRY}/node:${TAG}
