@@ -10,6 +10,7 @@ services:
       - 5432:5432
     labels:
       kompose.service.type: clusterip
+      kompose.volume.type: persistentVolumeClaim
       kompose.volume.storage-class-name: do-block-storage
       kompose.volume.size: "40Gi"
 
@@ -24,6 +25,7 @@ services:
     tty: true
     labels:
       kompose.service.type: clusterip
+      kompose.volume.type: persistentVolumeClaim
       kompose.volume.storage-class-name: do-block-storage
       kompose.volume.size: "10Gi"
 
@@ -34,6 +36,7 @@ services:
       - 6379:6379
     labels:
       kompose.service.type: clusterip
+      kompose.volume.type: persistentVolumeClaim
       kompose.volume.storage-class-name: do-block-storage
       kompose.volume.size: "20Gi"
 
