@@ -43,7 +43,7 @@ export class MetadataApi {
     } else {
       let data: any = {
         slug: slugify(contract, { lower: true }),
-        name: "Coming Soon",
+        name: "Unknown",
         metadata: {
           imageUrl: "",
           discordUrl: "",
