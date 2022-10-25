@@ -15,6 +15,8 @@ import { ethers } from "ethers";
 
 const QUEUE_NAME = "metadata-index-process-queue";
 
+const JSON_BASE64_PREFIX = "data:application/json;base64,";
+
 export const queue = new Queue(QUEUE_NAME, {
   connection: redis.duplicate(),
   defaultJobOptions: {
@@ -29,6 +31,30 @@ export const queue = new Queue(QUEUE_NAME, {
   },
 });
 new QueueScheduler(QUEUE_NAME, { connection: redis.duplicate() });
+
+const mapMetadata = (metadata: any) => {
+  return {
+    name: metadata.name,
+    description: metadata.description,
+    imageUrl: metadata.image,
+    mediaUrl: metadata.animation_url,
+    attributes: metadata?.attributes.map((el: any) => {
+      let kind: string;
+      if (el.display_type === "number") {
+        kind = "number";
+      } else if (el.display_type === "date") {
+        kind = "number";
+      } else {
+        kind = "string";
+      }
+      return {
+        key: el.trait_type,
+        value: el.value,
+        kind,
+      };
+    }),
+  };
+};
 
 // BACKGROUND WORKER ONLY
 if (config.doBackgroundWork) {
@@ -797,39 +823,31 @@ if (config.doBackgroundWork) {
         // Get the metadata for the tokens
         const url = tokenUri;
 
-        await promiseRetry(async (retry) => {
-          try {
-            const metadata: any = await axios
-              .get(url, { timeout: 60 * 1000 })
-              .then(({ data }) => data);
-            metadatas.push({
-              name: metadata.name,
-              description: metadata.description,
-              imageUrl: metadata.image,
-              mediaUrl: metadata.animation_url,
-              attributes: metadata?.attributes.map((el: any) => {
-                let kind: string;
-                if (el.display_type === "number") {
-                  kind = "number";
-                } else if (el.display_type === "date") {
-                  kind = "number";
-                } else {
-                  kind = "string";
-                }
-                return {
-                  key: el.trait_type,
-                  value: el.value,
-                  kind,
-                };
-              }),
-              ...refreshToken,
-            });
-          } catch (e) {
-            // eslint-disable-next-line no-console
-            console.log(e);
-            return retry(e);
-          }
-        });
+        if (url?.startsWith(JSON_BASE64_PREFIX)) {
+          const base64Data = url.replace(JSON_BASE64_PREFIX, "");
+          const decoded = JSON.parse(new Buffer(base64Data, "base64").toString("utf-8"));
+          metadatas.push({
+            ...decoded,
+            ...refreshToken,
+          });
+        } else {
+          await promiseRetry(async (retry) => {
+            try {
+              const metadata: any = await axios
+                .get(url, { timeout: 60 * 1000 })
+                .then(({ data }) => data);
+
+              metadatas.push({
+                ...mapMetadata(metadata),
+                ...refreshToken,
+              });
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.log(e);
+              return retry(e);
+            }
+          });
+        }
       }
 
       await metadataIndexWrite.addToQueue(
