@@ -22,3 +22,5 @@ postgres/
 #Kubernetes
 deployment.json
 deployment.yml
+
+testing.js

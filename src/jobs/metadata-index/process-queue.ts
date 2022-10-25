@@ -827,7 +827,7 @@ if (config.doBackgroundWork) {
           const base64Data = url.replace(JSON_BASE64_PREFIX, "");
           const decoded = JSON.parse(new Buffer(base64Data, "base64").toString("utf-8"));
           metadatas.push({
-            ...decoded,
+            ...mapMetadata(decoded),
             ...refreshToken,
           });
         } else {
