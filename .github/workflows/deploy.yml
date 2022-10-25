@@ -3,7 +3,7 @@ name: Deploy
 on:
   push:
     branches:
-      - v5
+      - v5-deploy
 
 jobs:
   build:
@@ -20,11 +20,11 @@ jobs:
           touch .env
           echo "VERSION=v5" >> .env
           echo "PORT=80" >> .env
-          echo "CHAIN_ID=100" >> .env
+          echo "CHAIN_ID=45000" >> .env
           # todo / extract to .env
           echo "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" >> .env
-          echo "BASE_NETWORK_HTTP_URL=https://rpc.ankr.com/gnosis" >> .env
-          echo "BASE_NETWORK_WS_URL=wss://rpc.gnosischain.com/wss" >> .env
+          echo "BASE_NETWORK_HTTP_URL=https://autobahn-rpc.rocknitive.com" >> .env
+          echo "BASE_NETWORK_WS_URL=wss://autobahn-rpc.com:4443" >> .env
           echo "DATABASE_URL=postgresql://postgres:password@postgres:5432/postgres?schema=public" >> .env
           echo "REDIS_URL=redis://redis:password@redis:6379" >> .env
           echo "CATCHUP=1" >> .env
@@ -33,13 +33,13 @@ jobs:
           echo "DO_EVENTS_SYNC_BACKFILL=1" >> .env
           echo "DISABLE_ORDERS=0" >> .env
           echo "METADATA_INDEXING_METHOD=contract" >> .env
-          echo "WRAPPED_NATIVE=0xe91D153E0b41518A2Ce8Dd3D7944Fa863463a97d" >> .env
+          echo "WRAPPED_NATIVE=0xFf85bD59873D6C14522c0D840cfE90AF57f50103" >> .env
           echo "USDC=0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83" >> .env
-          echo "ROUTER=0xCDb0839bbfd718b38d4F3fa9a5b2570162B5A6DE" >> .env
+          echo "ROUTER=0x341527adfC7593FEA0d876E38a89687D728BC3ae" >> .env
           echo "SEAPORT_EXCHANGE=0x00000000006c3852cbEf3e08E8dF289169EdE581" >> .env
           echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >> .env
           echo "METADATA_API_BASE_URL=x" >> .env
-          echo "WL_ADDRESS=0x2dF3556BE91d2715a36DcbB5aF3ad2866Cf7B33C" >> .env
+          echo "WL_ADDRESS=" >> .env
       - run: yarn run build
       - name: Install kompose
         run: |

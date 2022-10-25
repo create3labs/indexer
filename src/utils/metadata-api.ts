@@ -43,7 +43,7 @@ export class MetadataApi {
     } else {
       let data: any = {
         slug: slugify(contract, { lower: true }),
-        name: "Coming Soon",
+        name: "Unknown",
         metadata: {
           imageUrl: "",
           discordUrl: "",
@@ -57,7 +57,9 @@ export class MetadataApi {
 
       try {
         const res = await axios.get(
-          `https://raw.githubusercontent.com/create3labs/nft-metadata/main/metadata/100/${contract.toLowerCase()}/index.json`
+          `https://raw.githubusercontent.com/create3labs/nft-metadata/main/metadata/${
+            process.env.CHAIN_ID
+          }/${contract.toLowerCase()}/index.json`
         );
         data = res.data;
       } catch (e: any) {
