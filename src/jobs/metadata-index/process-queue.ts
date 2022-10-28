@@ -38,7 +38,7 @@ const mapMetadata = (metadata: any) => {
     description: metadata.description,
     imageUrl: metadata.image,
     mediaUrl: metadata.animation_url,
-    attributes: metadata?.attributes.map((el: any) => {
+    attributes: (metadata?.attributes || []).map((el: any) => {
       let kind: string;
       if (el.display_type === "number") {
         kind = "number";
