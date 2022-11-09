@@ -33,9 +33,9 @@ jobs:
           echo "DO_EVENTS_SYNC_BACKFILL=1" >> .env
           echo "DISABLE_ORDERS=0" >> .env
           echo "METADATA_INDEXING_METHOD=contract" >> .env
-          echo "WRAPPED_NATIVE=0xFf85bD59873D6C14522c0D840cfE90AF57f50103" >> .env
+          echo "WRAPPED_NATIVE=0x6405B66E6F27c32ADeFA43C24FD1e3d09769b560" >> .env
           echo "USDC=0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83" >> .env
-          echo "ROUTER=0x341527adfC7593FEA0d876E38a89687D728BC3ae" >> .env
+          echo "ROUTER=0x081f018eCCc32C5fa8cF1A5b0e16a3a35F829d00" >> .env
           echo "SEAPORT_EXCHANGE=0x00000000006c3852cbEf3e08E8dF289169EdE581" >> .env
           echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >> .env
           echo "METADATA_API_BASE_URL=x" >> .env
