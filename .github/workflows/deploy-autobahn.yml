@@ -34,6 +34,7 @@ jobs:
           echo "DISABLE_ORDERS=0" >> .env
           echo "METADATA_INDEXING_METHOD=contract" >> .env
           echo "WRAPPED_NATIVE=${{ secrets.AUTOBAHN_WRAPPED_NATIVE }}" >> .env
+          echo "USDC=${{ secrets.AUTOBAHN_USDC }}" >> .env
           echo "ROUTER=${{ secrets.AUTOBAHN_ROUTER }}" >> .env
           echo "SEAPORT_EXCHANGE=0x00000000006c3852cbEf3e08E8dF289169EdE581" >> .env
           echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >> .env
