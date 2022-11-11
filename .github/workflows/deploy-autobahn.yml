@@ -3,7 +3,7 @@ name: Deploy
 on:
   push:
     branches:
-      - v5-deploy
+      - v5-deploy-autobahn
 
 jobs:
   build:
@@ -20,11 +20,11 @@ jobs:
           touch .env
           echo "VERSION=v5" >> .env
           echo "PORT=80" >> .env
-          echo "CHAIN_ID=45000" >> .env
+          echo "CHAIN_ID=${{ secrets.AUTOBAHN_CHAIN_ID }}" >> .env
           # todo / extract to .env
-          echo "ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}" >> .env
-          echo "BASE_NETWORK_HTTP_URL=https://autobahn-rpc.rocknitive.com" >> .env
-          echo "BASE_NETWORK_WS_URL=wss://autobahn-rpc.com:4443" >> .env
+          echo "ADMIN_API_KEY=${{ secrets.AUTOBAHN_ADMIN_API_KEY }}" >> .env
+          echo "BASE_NETWORK_HTTP_URL=${{ secrets.AUTOBAHN_RPC }}" >> .env
+          echo "BASE_NETWORK_WS_URL=${{ secrets.AUTOBAHN_RPC_WS }}" >> .env
           echo "DATABASE_URL=postgresql://postgres:password@postgres:5432/postgres?schema=public" >> .env
           echo "REDIS_URL=redis://redis:password@redis:6379" >> .env
           echo "CATCHUP=1" >> .env
@@ -33,9 +33,8 @@ jobs:
           echo "DO_EVENTS_SYNC_BACKFILL=1" >> .env
           echo "DISABLE_ORDERS=0" >> .env
           echo "METADATA_INDEXING_METHOD=contract" >> .env
-          echo "WRAPPED_NATIVE=0x6405B66E6F27c32ADeFA43C24FD1e3d09769b560" >> .env
-          echo "USDC=0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83" >> .env
-          echo "ROUTER=0x081f018eCCc32C5fa8cF1A5b0e16a3a35F829d00" >> .env
+          echo "WRAPPED_NATIVE=${{ secrets.AUTOBAHN_WRAPPED_NATIVE }}" >> .env
+          echo "ROUTER=${{ secrets.AUTOBAHN_ROUTER }}" >> .env
           echo "SEAPORT_EXCHANGE=0x00000000006c3852cbEf3e08E8dF289169EdE581" >> .env
           echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >> .env
           echo "METADATA_API_BASE_URL=x" >> .env
@@ -50,13 +49,13 @@ jobs:
       - name: Set tag env
         run: echo "TAG=$(echo $GITHUB_SHA | head -c7)" >> $GITHUB_ENV
       - name: Set registry env
-        run: echo "REGISTRY=${{ secrets.DIGITALOCEAN_REGISTRY }}" >> $GITHUB_ENV
+        run: echo "REGISTRY=${{ secrets.AUTOBAHN_DIGITALOCEAN_REGISTRY }}" >> $GITHUB_ENV
       - name: Build image(s)
         run: docker compose -f docker-compose.kubernetes.yaml build
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
-          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          token: ${{ secrets.AUTOBAHN_DIGITALOCEAN_ACCESS_TOKEN }}
       - name: Log in to DO Container Registry
         run: doctl registry login --expiry-seconds 1200
       - name: Push image to DO Container Registry
@@ -68,7 +67,7 @@ jobs:
           ls -lah
           ./kompose convert --file docker-compose.kubernetes.yaml --out deployment.yml
       - name: Save DigitalOcean kubeconfig with short-lived credentials
-        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.DIGITALOCEAN_CLUSTER_NAME }}
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.AUTOBAHN_DIGITALOCEAN_CLUSTER_NAME }}
       - name: Deploy to DigitalOcean Kubernetes
         run: kubectl apply -f $GITHUB_WORKSPACE/deployment.yml
       - name: Verify deployment
