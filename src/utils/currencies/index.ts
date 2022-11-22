@@ -109,6 +109,12 @@ export const getCurrency = async (currencyAddress: string): Promise<Currency> =>
 };
 
 export const tryGetCurrencyDetails = async (currencyAddress: string) => {
+  logger.info(
+    "try-get-currency-details",
+    `currencyAddress: ${currencyAddress}, coingeckoNetworkId: ${
+      getNetworkSettings().coingecko?.networkId
+    }`
+  );
   // `name`, `symbol` and `decimals` are fetched from on-chain
   const iface = new Interface([
     "function name() view returns (string)",
