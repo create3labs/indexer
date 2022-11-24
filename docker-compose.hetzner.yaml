@@ -1,0 +1,61 @@
+version: "3"
+
+services:
+  indexer:
+    build:
+      context: './'
+    working_dir: /indexer
+    #command: yarn install && yarn build && yarn start
+    env_file:
+      - ${HOME}/env-indexer
+    ports:
+      - "80:80"
+    restart: unless-stopped
+    networks:
+      - local
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:13.2
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    networks:
+      - local
+    volumes:
+      - database:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: 'redis:alpine'
+    restart: unless-stopped
+    command: sh -c "redis-server --requirepass ${REDIS_PASSWORD:-password}"
+    networks:
+      - local
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+
+networks:
+  local:
+    driver: bridge
+
+volumes:
+  database:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: ${HOME}/database
+  redis-data:
+    driver: local
+    driver_opts:
+      type: 'none'
+      o: 'bind'
+      device: ${HOME}/redis-data
