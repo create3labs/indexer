@@ -12,10 +12,10 @@ for IPV4 in ${IPV4_LIST}; do
     docker compose down --remove-orphans; \
     docker volume rm redis-data; \
     docker volume rm postgres-data; \
-    docker compose -f docker-compose.hetzner.yaml up -d --remove-orphans"
+    docker compose -f docker-compose.hetzner.yaml up -d --build --force-recreate"
   else
     ssh c3labs@$IPV4 "cd ${REMOTE_REPO_BASE_DIR}; \
-    docker compose -f docker-compose.hetzner.yaml up -d --remove-orphans"
+    docker compose -f docker-compose.hetzner.yaml up -d --build --force-recreate --remove-orphans"
   fi
   sleep 1;
 done;
