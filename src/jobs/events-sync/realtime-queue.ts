@@ -38,7 +38,7 @@ if (config.doBackgroundWork) {
         logger.info(QUEUE_NAME, `Max blocks = ${maxBlocks}`);
 
         const headBlock = await baseProvider.getBlockNumber();
-        logger.info(QUEUE_NAME, `Head block = ${maxBlocks}`);
+        logger.info(QUEUE_NAME, `Head block = ${headBlock}`);
 
         // Fetch the last synced blocked
         let localBlock = Number(await redis.get(`${QUEUE_NAME}-last-block`));
