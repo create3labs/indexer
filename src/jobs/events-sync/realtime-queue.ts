@@ -43,7 +43,14 @@ if (config.doBackgroundWork) {
         // Fetch the last synced blocked
         let localBlock = Number(await redis.get(`${QUEUE_NAME}-last-block`));
         logger.info(QUEUE_NAME, `Local block = ${localBlock}`);
-        if (localBlock >= headBlock) {
+
+        if (localBlock > headBlock) {
+          // A strange block has been persisted to redis, we go back 10k blocks
+          await redis.set(`${QUEUE_NAME}-last-block`, Math.max(1, localBlock - 10000));
+          return;
+        }
+
+        if (localBlock == headBlock) {
           // Nothing to sync
           return;
         }
