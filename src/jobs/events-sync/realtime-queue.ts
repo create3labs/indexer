@@ -29,16 +29,20 @@ if (config.doBackgroundWork) {
     QUEUE_NAME,
     async () => {
       try {
+        logger.info(QUEUE_NAME, `Running background worker`);
         // We allow syncing of up to `maxBlocks` blocks behind the head
         // of the blockchain. If we lag behind more than that, then all
         // previous blocks that we cannot cover here will be relayed to
         // the backfill queue.
         const maxBlocks = getNetworkSettings().realtimeSyncMaxBlockLag;
+        logger.info(QUEUE_NAME, `Max blocks = ${maxBlocks}`);
 
         const headBlock = await baseProvider.getBlockNumber();
+        logger.info(QUEUE_NAME, `Head block = ${maxBlocks}`);
 
         // Fetch the last synced blocked
         let localBlock = Number(await redis.get(`${QUEUE_NAME}-last-block`));
+        logger.info(QUEUE_NAME, `Local block = ${localBlock}`);
         if (localBlock >= headBlock) {
           // Nothing to sync
           return;
