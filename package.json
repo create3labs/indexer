@@ -53,7 +53,7 @@
     "@typescript-eslint/parser": "^5.14.0",
     "arweave": "^1.10.23",
     "aws-sdk": "^2.1148.0",
-    "bullmq": "^1.91.1",
+    "bullmq": "^1.75.1",
     "dd-trace": "^3.5.0",
     "dotenv": "^10.0.0",
     "eslint": "^8.10.0",
