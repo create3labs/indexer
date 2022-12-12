@@ -5,6 +5,7 @@ node_modules
 .env
 .env.local
 .env.bscTest
+.env.testnet
 
 # Build
 dist
@@ -24,3 +25,4 @@ deployment.json
 deployment.yml
 
 testing.js
+coverage/

@@ -20,11 +20,12 @@ const version = "v1";
 
 export const getCollectionFloorAskOracleV1Options: RouteOptions = {
   description: "Collection floor",
-  notes: "Get a signed message of any collection's floor price (spot or twap)",
-  tags: ["api", "Oracle"],
+  notes:
+    "Get a signed message of any collection's floor price (spot or twap). The oracle signer address is 0x32da57e736e05f75aa4fae2e9be60fd904492726.",
+  tags: ["api", "x-deprecated"],
   plugins: {
     "hapi-swagger": {
-      order: 12,
+      deprecated: true,
     },
   },
   validate: {
@@ -109,9 +110,9 @@ export const getCollectionFloorAskOracleV1Options: RouteOptions = {
             FROM z
           )
           SELECT
-            SUM(
-              w.price * (w.end_time - w.start_time)::NUMERIC) / ((MAX(w.end_time) - MIN(w.start_time))::NUMERIC
-            ) AS price
+            floor(
+              SUM(w.price * (w.end_time - w.start_time)) / (MAX(w.end_time) - MIN(w.start_time))
+            )::NUMERIC(78, 0) AS price
           FROM w
       `;
 

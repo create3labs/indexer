@@ -23,7 +23,7 @@ export const getRedirectTokenV2Options: RouteOptions = {
   },
   validate: {
     params: Joi.object({
-      source: Joi.string().required().description("Name of the order source. Example `opensea.io`"),
+      source: Joi.string().required().description("Domain of the source. Example `opensea.io`"),
       token: Joi.string()
         .lowercase()
         .pattern(/^0x[a-fA-F0-9]{40}:[0-9]+$/)
@@ -38,16 +38,20 @@ export const getRedirectTokenV2Options: RouteOptions = {
     const sources = await Sources.getInstance();
 
     try {
-      let source = await sources.getByName(params.source, false);
+      let source = sources.getByName(params.source, false);
       if (!source) {
-        source = await sources.getByDomain(params.source);
+        source = sources.getByDomain(params.source);
+      }
+
+      if (!source) {
+        throw new Error("Unknown source");
       }
 
       const [contract, tokenId] = params.token.split(":");
       const tokenUrl = sources.getTokenUrl(source, contract, tokenId);
 
       if (tokenUrl) {
-        return response.redirect(tokenUrl);
+        return response.redirect(tokenUrl).header("cache-control", `${1000 * 60}`);
       }
 
       let redirectUrl = source.domain;
@@ -55,7 +59,7 @@ export const getRedirectTokenV2Options: RouteOptions = {
         redirectUrl = `https://${redirectUrl}`;
       }
 
-      return response.redirect(redirectUrl);
+      return response.redirect(redirectUrl).header("cache-control", `${1000 * 60}`);
     } catch (error) {
       logger.error(`get-redirect-token-${version}-handler`, `Handler failure: ${error}`);
       throw error;

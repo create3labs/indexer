@@ -2,8 +2,9 @@ import * as Sdk from "@0xlol/sdk";
 import { BaseBuildParams } from "@0xlol/sdk/dist/looks-rare/builders/base";
 import axios from "axios";
 
-import { config } from "@/config/index";
 import { redb } from "@/common/db";
+import { fromBuffer } from "@/common/utils";
+import { config } from "@/config/index";
 
 export interface BaseOrderBuildOptions {
   maker: string;
@@ -25,7 +26,7 @@ export const getBuildInfo = async (
   const collectionResult = await redb.oneOrNone(
     `
       SELECT
-        1
+        contracts.address
       FROM collections
       JOIN contracts
         ON collections.contract = contracts.address
@@ -41,8 +42,10 @@ export const getBuildInfo = async (
 
   const buildParams: BaseBuildParams = {
     isOrderAsk: side === "sell",
-    collection: options.contract,
+    collection: fromBuffer(collectionResult.address),
     signer: options.maker,
+    // Protocol fee (1.5%) + optional fixed royalties (0.5%)
+    minPercentageToAsk: 9800,
     price: options.weiPrice,
     // LooksRare uses WETH instead of ETH for sell orders too
     currency: Sdk.Common.Addresses.Weth[config.chainId],
@@ -50,13 +53,18 @@ export const getBuildInfo = async (
     nonce: await axios
       .get(
         `https://${
-          config.chainId === 4 ? "api-rinkeby." : "api."
+          config.chainId === 5 ? "api-goerli." : "api."
         }looksrare.org/api/v1/orders/nonce?address=${options.maker}`,
         {
-          headers: {
-            "Content-Type": "application/json",
-            "X-Looks-Api-Key": config.looksRareApiKey,
-          },
+          headers:
+            config.chainId === 1
+              ? {
+                  "Content-Type": "application/json",
+                  "X-Looks-Api-Key": config.looksRareApiKey,
+                }
+              : {
+                  "Content-Type": "application/json",
+                },
         }
       )
       .then(({ data }: { data: { data: string } }) => data.data),

@@ -1,12 +1,14 @@
 import { Job, Queue, QueueScheduler, Worker } from "bullmq";
 
 import { logger } from "@/common/logger";
-import { redis } from "@/common/redis";
+import { acquireLock, redis, releaseLock } from "@/common/redis";
 import { config } from "@/config/index";
 import { idb } from "@/common/db";
 import { randomUUID } from "crypto";
 import { EOL } from "os";
 import AWS from "aws-sdk";
+import crypto from "crypto";
+import stringify from "json-stable-stringify";
 
 import { AskEventsDataSource } from "@/jobs/data-export/data-sources/ask-events";
 import { TokenFloorAskEventsDataSource } from "@/jobs/data-export/data-sources/token-floor-ask-events";
@@ -19,15 +21,16 @@ import { AttributeKeysDataSource } from "@/jobs/data-export/data-sources/attribu
 import { AttributesDataSource } from "@/jobs/data-export/data-sources/attributes";
 import { TokenAttributesDataSource } from "@/jobs/data-export/data-sources/token-attributes";
 
-const QUEUE_NAME = "export-data-queue-v4";
+const QUEUE_NAME = "export-data-queue";
 const QUERY_LIMIT = 1000;
 
 export const queue = new Queue(QUEUE_NAME, {
   connection: redis.duplicate(),
   defaultJobOptions: {
+    attempts: 10,
     removeOnComplete: true,
-    removeOnFail: true,
-    timeout: 60000,
+    removeOnFail: 100,
+    timeout: 120000,
   },
 });
 new QueueScheduler(QUEUE_NAME, { connection: redis.duplicate() });
@@ -39,40 +42,82 @@ if (config.doBackgroundWork) {
     async (job: Job) => {
       const { kind } = job.data;
 
-      logger.info(QUEUE_NAME, `Export started. kind:${kind}`);
+      const timeBefore = performance.now();
 
-      try {
-        const { cursor, sequenceNumber } = await getSequenceInfo(kind);
-        const { data, nextCursor } = await getDataSource(kind).getSequenceData(cursor, QUERY_LIMIT);
+      if (await acquireLock(getLockName(kind), 60 * 5)) {
+        try {
+          const { cursor, sequenceNumber } = await getSequenceInfo(kind);
 
-        if (data.length) {
-          const sequenceNumberPadded = ("000000000000000" + sequenceNumber).slice(-15);
-          const targetName = kind.replace(/-/g, "_");
+          const cursorHash = crypto.createHash("sha256").update(stringify(cursor)).digest("hex");
+          const lastCursorHash = await redis.get(`${QUEUE_NAME}-${kind}-last-cursor`);
 
-          let sequence = "";
-
-          for (const dataRecord of data) {
-            sequence += JSON.stringify(dataRecord) + EOL;
+          if (cursorHash === lastCursorHash) {
+            logger.warn(
+              QUEUE_NAME,
+              `Export invalid. kind:${kind}, cursor:${JSON.stringify(
+                cursor
+              )}, sequenceNumber:${sequenceNumber}, cursorHash=${cursorHash}, lastCursorHash=${lastCursorHash}`
+            );
           }
 
-          await uploadSequenceToS3(
-            `${targetName}/reservoir_${sequenceNumberPadded}.json`,
-            sequence
+          const { data, nextCursor } = await getDataSource(kind).getSequenceData(
+            cursor,
+            QUERY_LIMIT
           );
-          await setNextSequenceInfo(kind, nextCursor);
+
+          if (data.length) {
+            const sequenceNumberPadded = ("000000000000000" + sequenceNumber).slice(-15);
+            const targetName = kind.replace(/-/g, "_");
+
+            let sequence = "";
+
+            for (const dataRecord of data) {
+              sequence += JSON.stringify(dataRecord) + EOL;
+            }
+
+            await uploadSequenceToS3(
+              `${targetName}/reservoir_${sequenceNumberPadded}.json`,
+              sequence
+            );
+            await setNextSequenceInfo(kind, nextCursor);
+
+            await redis.set(
+              `${QUEUE_NAME}-${kind}-last-cursor`,
+              crypto.createHash("sha256").update(stringify(cursor)).digest("hex")
+            );
+          }
+
+          // Trigger next sequence only if there are more results
+          job.data.addToQueue = data.length >= QUERY_LIMIT;
+
+          const timeElapsed = Math.floor((performance.now() - timeBefore) / 1000);
+
+          if (timeElapsed > 5) {
+            logger.warn(
+              QUEUE_NAME,
+              `Export finished. kind:${kind}, cursor:${JSON.stringify(
+                cursor
+              )}, sequenceNumber:${sequenceNumber}, nextCursor:${JSON.stringify(
+                nextCursor
+              )}, addToQueue=${data.length >= QUERY_LIMIT}, timeElapsed=${timeElapsed}`
+            );
+          } else {
+            logger.info(
+              QUEUE_NAME,
+              `Export finished. kind:${kind}, cursor:${JSON.stringify(
+                cursor
+              )}, sequenceNumber:${sequenceNumber}, nextCursor:${JSON.stringify(
+                nextCursor
+              )}, addToQueue=${data.length >= QUERY_LIMIT}, timeElapsed=${timeElapsed}`
+            );
+          }
+        } catch (error) {
+          logger.error(QUEUE_NAME, `Export ${kind} failed: ${error}`);
         }
 
-        // Trigger next sequence only if there are more results
-        job.data.addToQueue = data.length >= QUERY_LIMIT;
-
-        logger.info(
-          QUEUE_NAME,
-          `Export finished. kind:${kind}, cursor:${JSON.stringify(
-            cursor
-          )}, sequenceNumber:${sequenceNumber}`
-        );
-      } catch (error) {
-        logger.error(QUEUE_NAME, `Export ${kind} failed: ${error}`);
+        await releaseLock(getLockName(kind));
+      } else {
+        logger.info(QUEUE_NAME, `Unable to acquire lock: ${kind}`);
       }
     },
     { connection: redis.duplicate(), concurrency: 15 }
@@ -82,6 +127,10 @@ if (config.doBackgroundWork) {
     if (job.data.addToQueue) {
       await addToQueue(job.data.kind);
     }
+  });
+
+  worker.on("failed", async (job) => {
+    logger.error(QUEUE_NAME, `Worker failed: ${JSON.stringify(job)}`);
   });
 
   worker.on("error", (error) => {
@@ -102,8 +151,12 @@ export enum DataSourceKind {
   tokenAttributes = "token-attributes",
 }
 
+export const getLockName = (kind: DataSourceKind) => {
+  return `${QUEUE_NAME}:${kind}-lock`;
+};
+
 export const addToQueue = async (kind: DataSourceKind) => {
-  await queue.add(randomUUID(), { kind }, { jobId: kind });
+  await queue.add(randomUUID(), { kind });
 };
 
 const getSequenceInfo = async (kind: DataSourceKind) => {
@@ -174,6 +227,24 @@ const uploadSequenceToS3 = async (key: string, data: string) => {
       ACL: "bucket-owner-full-control",
     })
     .promise();
+
+  if (config.dataExportS3ArchiveBucketName) {
+    try {
+      await new AWS.S3({
+        accessKeyId: config.awsAccessKeyId,
+        secretAccessKey: config.awsSecretAccessKey,
+      })
+        .putObject({
+          Bucket: config.dataExportS3ArchiveBucketName,
+          Key: key,
+          Body: data,
+          ContentType: "application/json",
+        })
+        .promise();
+    } catch (error) {
+      logger.error(QUEUE_NAME, `Upload ${key} to archive failed: ${error}`);
+    }
+  }
 };
 
 const getAwsCredentials = async () => {

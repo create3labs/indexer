@@ -14,10 +14,12 @@ import { Sources } from "@/models/sources";
 
 export type OrderInfo = {
   orderParams: {
+    // SDK types
     maker: string;
     contract: string;
     tokenId: string;
     price: string;
+    // Additional types for validation (eg. ensuring only the latest event is relevant)
     txHash: string;
     txTimestamp: number;
   };
@@ -28,7 +30,12 @@ type SaveResult = {
   id: string;
   txHash?: string;
   status: string;
+  triggerKind?: "new-order" | "reprice";
 };
+
+export const getOrderId = (contract: string, tokenId: string) =>
+  // TODO: Add the marketplace identifier to the order id (see Cryptopunks)
+  keccak256(["address", "uint256"], [contract, tokenId]);
 
 export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
   const results: SaveResult[] = [];
@@ -37,7 +44,7 @@ export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
   const handleOrder = async ({ orderParams, metadata }: OrderInfo) => {
     try {
       // On Foundation, we can only have a single currently active order per NFT
-      const id = keccak256(["address", "uint256"], [orderParams.contract, orderParams.tokenId]);
+      const id = getOrderId(orderParams.contract, orderParams.tokenId);
 
       // Ensure that the order is not cancelled
       const cancelResult = await redb.oneOrNone(
@@ -57,7 +64,7 @@ export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
         });
       }
 
-      // Ensure that the order is not filled.
+      // Ensure that the order is not filled
       const fillResult = await redb.oneOrNone(
         `
           SELECT 1 FROM fill_events_2
@@ -78,7 +85,7 @@ export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
       const orderResult = await redb.oneOrNone(
         `
           SELECT
-            lower(orders.valid_between) AS valid_from
+            extract('epoch' from lower(orders.valid_between)) AS valid_from
           FROM orders
           WHERE orders.id = $/id/
         `,
@@ -93,15 +100,19 @@ export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
                 fillability_status = 'fillable',
                 maker = $/maker/,
                 price = $/price/,
+                currency_price = $/price/,
                 value = $/price/,
+                currency_value = $/price/,
                 valid_between = tstzrange(date_trunc('seconds', to_timestamp(${orderParams.txTimestamp})), 'Infinity', '[]'),
                 expiration = 'Infinity',
-                updated_at = now()
+                updated_at = now(),
+                raw_data = $/orderParams:json/
               WHERE orders.id = $/id/
             `,
             {
               maker: toBuffer(orderParams.maker),
               price: orderParams.price,
+              orderParams,
               id,
             }
           );
@@ -110,6 +121,7 @@ export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
             id,
             txHash: orderParams.txHash,
             status: "success",
+            triggerKind: "reprice",
           });
         } else {
           // If a newer order already exists, then we just skip processing
@@ -197,12 +209,16 @@ export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
         dynamic: null,
         raw_data: orderParams,
         expiration: validTo,
+        missing_royalties: null,
+        normalized_value: null,
+        currency_normalized_value: null,
       });
 
       return results.push({
         id,
         txHash: orderParams.txHash,
         status: "success",
+        triggerKind: "new-order",
       });
     } catch (error) {
       logger.error(
@@ -251,20 +267,22 @@ export const save = async (orderInfos: OrderInfo[]): Promise<SaveResult[]> => {
       }
     );
     await idb.none(pgp.helpers.insert(orderValues, columns) + " ON CONFLICT DO NOTHING");
+  }
 
-    await ordersUpdateById.addToQueue(
-      results.map(
-        ({ id, txHash }) =>
+  await ordersUpdateById.addToQueue(
+    results
+      .filter(({ status }) => status === "success")
+      .map(
+        ({ id, txHash, triggerKind }) =>
           ({
-            context: `new-order-${id}-${txHash}`,
+            context: `${triggerKind}-${id}-${txHash}`,
             id,
             trigger: {
-              kind: "new-order",
+              kind: triggerKind,
             },
           } as ordersUpdateById.OrderInfo)
       )
-    );
-  }
+  );
 
   return results;
 };

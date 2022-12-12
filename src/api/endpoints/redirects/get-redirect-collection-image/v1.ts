@@ -7,6 +7,7 @@ import Joi from "joi";
 import { logger } from "@/common/logger";
 import { Collections } from "@/models/collections";
 import * as Boom from "@hapi/boom";
+import { regex } from "@/common/utils";
 
 const version = "v1";
 
@@ -26,7 +27,7 @@ export const getRedirectCollectionImageV1Options: RouteOptions = {
     params: Joi.object({
       collection: Joi.string()
         .lowercase()
-        .pattern(/^0x[a-fA-F0-9]{40}$/)
+        .pattern(regex.address)
         .required()
         .description(
           "Redirect to the given collection image. Example: `0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63`"
@@ -38,11 +39,13 @@ export const getRedirectCollectionImageV1Options: RouteOptions = {
     try {
       const collection = await Collections.getById(params.collection, true);
 
-      if (_.isNull(collection)) {
+      if (_.isNull(collection) || _.isNull(collection.metadata)) {
         throw Boom.badData(`Collection ${params.collection} not found`);
       }
 
-      return response.redirect(collection.metadata.imageUrl);
+      return response
+        .redirect(collection.metadata.imageUrl)
+        .header("cache-control", `${1000 * 60}`);
     } catch (error) {
       logger.error(`get-redirect-collection-image-${version}-handler`, `Handler failure: ${error}`);
       throw error;

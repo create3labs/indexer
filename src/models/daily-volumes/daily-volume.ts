@@ -4,7 +4,7 @@
 
 import { logger } from "@/common/logger";
 import { redis } from "@/common/redis";
-import { PgPromiseQuery, idb, pgp, redb } from "@/common/db";
+import { PgPromiseQuery, idb, pgp, redb, ridb } from "@/common/db";
 
 export class DailyVolume {
   private static lockKey = "daily-volumes-running";
@@ -36,17 +36,13 @@ export class DailyVolume {
         );
         return true;
       }
-    } catch (e) {
+    } catch (error) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Couldn't determine if the daily volume for timestamp ${startTime} was already added to the database`,
-          timestamp: startTime,
-          exception: e,
-        })
+        `Couldn't determine if the daily volume for timestamp ${startTime} was already added to the database`
       );
 
-      throw e;
+      throw error;
     }
 
     return false;
@@ -67,7 +63,7 @@ export class DailyVolume {
     startTime: number,
     ignoreInsertedRows = false
   ): Promise<boolean> {
-    logger.info("daily-volumes", `Calculating daily volumes for ${startTime}`);
+    logger.info("daily-volumes", `Calculating daily volumes. startTime=${startTime}`);
     // Don't recalculate if the day was already calculated
     if (!ignoreInsertedRows) {
       try {
@@ -84,7 +80,7 @@ export class DailyVolume {
 
     let results = [];
     try {
-      results = await redb.manyOrNone(
+      results = await ridb.manyOrNone(
         `
           SELECT t1.collection_id,
             t1.volume,
@@ -109,6 +105,7 @@ export class DailyVolume {
               "fe"."timestamp" >= $/startTime/
               AND "fe"."timestamp" < $/endTime/
               AND fe.price > 0
+              AND fe.is_primary IS NOT TRUE 
             GROUP BY "collection_id") t1
           LEFT JOIN
             (SELECT
@@ -124,6 +121,7 @@ export class DailyVolume {
               "fe"."timestamp" >= $/startTime/
               AND "fe"."timestamp" < $/endTime/
               AND fe.price > 0
+              AND fe.is_primary IS NOT TRUE 
               AND coalesce(fe.wash_trading_score, 0) = 0
             GROUP BY "collection_id") t2
           ON (t1.collection_id = t2.collection_id)
@@ -133,14 +131,10 @@ export class DailyVolume {
           endTime,
         }
       );
-    } catch (e) {
+    } catch (error) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while trying to fetch the calculations for the daily volume`,
-          timestamp: startTime,
-          exception: e,
-        })
+        `Error while trying to fetch the calculations for the daily volume. startTime=${startTime}, endTime=${endTime}, error=${error}`
       );
 
       return false;
@@ -200,7 +194,8 @@ export class DailyVolume {
               floor_sell_value = $/floor_sell_value/, 
               floor_sell_value_clean = $/floor_sell_value_clean/, 
               sales_count = $/sales_count/,
-              sales_count_clean = $/sales_count_clean/
+              sales_count_clean = $/sales_count_clean/,
+              updated_at = now()
             `,
           values: values,
         });
@@ -209,15 +204,12 @@ export class DailyVolume {
       try {
         const concat = pgp.helpers.concat(queries);
         await idb.none(concat);
-      } catch (e: any) {
+      } catch (error: any) {
         logger.error(
           "daily-volumes",
-          JSON.stringify({
-            msg: `Error while inserting/updating daily volumes`,
-            timestamp: startTime,
-            exception: e.message,
-          })
+          `Error while inserting/updating daily volumes. startTime=${startTime}, endTime=${endTime}c`
         );
+
         return false;
       }
     }
@@ -234,9 +226,11 @@ export class DailyVolume {
     // Skip the query when the collection_id = -1
     const date = new Date();
     date.setUTCHours(0, 0, 0, 0);
-    const day1Timestamp = date.getTime() / 1000 - 24 * 3600;
-    const day7Timestamp = date.getTime() / 1000 - 7 * 24 * 3600;
-    const day30Timestamp = date.getTime() / 1000 - 30 * 24 * 3600;
+
+    const dateTimestamp = date.getTime();
+    const day1Timestamp = dateTimestamp / 1000 - 24 * 3600;
+    const day7Timestamp = dateTimestamp / 1000 - 7 * 24 * 3600;
+    const day30Timestamp = dateTimestamp / 1000 - 30 * 24 * 3600;
 
     const valuesPostfix = useCleanValues ? "_clean" : "";
 
@@ -259,20 +253,17 @@ export class DailyVolume {
       `,
         ["day1_rank", "day1_volume", "day1_floor_sell_value", day1Timestamp]
       );
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while calculating previous day volumes`,
-          exception: e.message,
-        })
+        `Error while calculating previous day volumes. dateTimestamp=${dateTimestamp}, day1Timestamp=${day1Timestamp}, error=${error}`
       );
     }
 
     if (!day1Results.length) {
       logger.error(
         "daily-volumes",
-        "No daily volumes found for the previous day, should be impossible"
+        `No daily volumes found for the previous day, should be impossible. dateTimestamp=${dateTimestamp}, day1Timestamp=${day1Timestamp}`
       );
 
       return false;
@@ -297,13 +288,10 @@ export class DailyVolume {
         "day7_floor_sell_value",
         day7Timestamp,
       ]);
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while calculating 7 day daily volumes`,
-          exception: e.message,
-        })
+        `Error while calculating 7 day daily volumes. dateTimestamp=${dateTimestamp}, day1Timestamp=${day7Timestamp}, error=${error}`
       );
 
       return false;
@@ -316,13 +304,10 @@ export class DailyVolume {
         "day30_floor_sell_value",
         day30Timestamp,
       ]);
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while calculating 30 day daily volumes`,
-          exception: e.message,
-        })
+        `Error while calculating 30 day daily volumes. dateTimestamp=${dateTimestamp}, day1Timestamp=${day30Timestamp}, error=${error}`
       );
 
       return false;
@@ -335,13 +320,10 @@ export class DailyVolume {
         "all_time_floor_sell_value",
         0,
       ]);
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while calculating all time daily volumes`,
-          exception: e.message,
-        })
+        `Error while calculating all time daily volumes. dateTimestamp=${dateTimestamp}, error=${error}`
       );
 
       return false;
@@ -352,7 +334,7 @@ export class DailyVolume {
     if (!mergedArr.length) {
       logger.error(
         "daily-volumes",
-        "No daily volumes found for 1, 7 and 30 days. Should be impossible"
+        `No daily volumes found for 1, 7 and 30 days. Should be impossible. dateTimestamp=${dateTimestamp}`
       );
 
       return false;
@@ -381,14 +363,12 @@ export class DailyVolume {
       });
 
       await idb.none(pgp.helpers.concat(queries));
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while calculating the daily volumes for insertion into the collections table`,
-          exception: e.message,
-        })
+        `Error while calculating the daily volumes for insertion into the collections table. dateTimestamp=${dateTimestamp}, error=${error}`
       );
+
       return false;
     }
 
@@ -412,15 +392,30 @@ export class DailyVolume {
       if (!(await DailyVolume.cacheFloorSalePrice(30, useCleanValues))) {
         return false;
       }
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while calculating volume changes`,
-          exception: e.message,
-        })
+        `Error while calculating volume changes. dateTimestamp=${dateTimestamp}, error=${error}`
       );
+
       return false;
+    }
+
+    try {
+      for (const row of mergedArr) {
+        await redis
+          .multi()
+          .zadd("collections_day1_rank", row.day1_rank, row.collection_id)
+          .zadd("collections_day7_rank", row.day7_rank, row.collection_id)
+          .zadd("collections_day30_rank", row.day30_rank, row.collection_id)
+          .zadd("collections_all_time_rank", row.all_time_rank, row.collection_id)
+          .exec();
+      }
+    } catch (error: any) {
+      logger.error(
+        "daily-volumes",
+        `Error while caching day30_rank on redis. dateTimestamp=${dateTimestamp}, error=${error}`
+      );
     }
 
     return true;
@@ -443,15 +438,14 @@ export class DailyVolume {
 
     const timeDiff = days * 24 * 3600;
 
-    const currentPeriod = date.getTime() / 1000 - timeDiff; // The last 1, 7, 30 days
+    const dateTimestamp = date.getTime();
+    const currentPeriod = dateTimestamp / 1000 - timeDiff; // The last 1, 7, 30 days
     const previousPeriod = currentPeriod - timeDiff; // The period before the last 1, 7, 30 days
     const valuesPostfix = useCleanValues ? "_clean" : "";
 
     logger.info(
       "daily-volumes",
-      JSON.stringify({
-        msg: `running calculateVolumeChange for period ${days}, useCleanValues: ${useCleanValues}`,
-      })
+      `running calculateVolumeChange. dateTimestamp=${dateTimestamp}, days=${days}, currentPeriod=${currentPeriod}, previousPeriod=${previousPeriod}, useCleanValues=${useCleanValues}`
     );
 
     const query = `
@@ -472,13 +466,10 @@ export class DailyVolume {
         previousPeriod,
         currentPeriod,
       ]);
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while calculating the previous period volume`,
-          exception: e.message,
-        })
+        `Error while calculating the previous period volume. dateTimestamp=${dateTimestamp}, days=${days}, currentPeriod=${currentPeriod}, previousPeriod=${previousPeriod}, useCleanValues=${useCleanValues}, error=${error}`
       );
 
       return false;
@@ -487,9 +478,7 @@ export class DailyVolume {
     if (!results.length) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `No previous period data found for day${days} with timestamps between ${previousPeriod} and ${currentPeriod}`,
-        })
+        `No previous period data found for day${days} with timestamps between ${previousPeriod} and ${currentPeriod}. dateTimestamp=${dateTimestamp}`
       );
 
       return true;
@@ -509,22 +498,18 @@ export class DailyVolume {
 
     try {
       await idb.none(pgp.helpers.concat(queries));
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error while updating the previous period volume in the collections table`,
-          exception: e.message,
-        })
+        `Error while updating the previous period volume in the collections table. dateTimestamp=${dateTimestamp}, days=${days}, currentPeriod=${currentPeriod}, previousPeriod=${previousPeriod}, useCleanValues=${useCleanValues}, error=${error}`
       );
+
       return false;
     }
 
     logger.info(
       "daily-volumes",
-      JSON.stringify({
-        msg: `Finished calculateVolumeChange for period ${days}`,
-      })
+      `Finished calculateVolumeChange. dateTimestamp=${dateTimestamp}, days=${days}, currentPeriod=${currentPeriod}, previousPeriod=${previousPeriod}, useCleanValues=${useCleanValues}`
     );
 
     return true;
@@ -545,14 +530,13 @@ export class DailyVolume {
     date.setUTCHours(0, 0, 0, 0);
 
     const timeDiff = period * 24 * 3600;
-    const dayToFetch = date.getTime() / 1000 - timeDiff;
+    const dateTimestamp = date.getTime();
+    const dayToFetch = dateTimestamp / 1000 - timeDiff;
     const valuesPostfix = useCleanValues ? "_clean" : "";
 
     logger.info(
       "daily-volumes",
-      JSON.stringify({
-        msg: `Running cacheFloorSalePrice for period ${period}. useCleanValues: ${useCleanValues}`,
-      })
+      `Running cacheFloorSalePrice. period=${period}, dateTimestamp=${dateTimestamp}, dayToFetch=${dayToFetch}, useCleanValues=${useCleanValues}`
     );
 
     const query = `
@@ -567,13 +551,10 @@ export class DailyVolume {
     let results: any = [];
     try {
       results = await redb.manyOrNone(query, [dayToFetch]);
-    } catch (e: any) {
+    } catch (error: any) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `Error fetching the floor_sell_value of day ${dayToFetch}`,
-          exception: e.message,
-        })
+        `Error fetching the floor_sell_value of day ${dayToFetch}. period=${period}, dateTimestamp=${dateTimestamp}, dayToFetch=${dayToFetch}, useCleanValues=${useCleanValues}, error=${error}`
       );
 
       return false;
@@ -582,9 +563,7 @@ export class DailyVolume {
     if (!results.length) {
       logger.error(
         "daily-volumes",
-        JSON.stringify({
-          msg: `No floor_sell_value found for day ${dayToFetch}`,
-        })
+        `No floor_sell_value found for day ${dayToFetch}. period=${period}, dateTimestamp=${dateTimestamp}, dayToFetch=${dayToFetch}, useCleanValues=${useCleanValues}`
       );
 
       return true;
@@ -614,9 +593,7 @@ export class DailyVolume {
 
     logger.info(
       "daily-volumes",
-      JSON.stringify({
-        msg: `Finished cacheFloorSalePrice for period ${period}`,
-      })
+      `Finished cacheFloorSalePrice for period ${period}. period=${period}, dateTimestamp=${dateTimestamp}, dayToFetch=${dayToFetch}, useCleanValues=${useCleanValues}`
     );
 
     return true;

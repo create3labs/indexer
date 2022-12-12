@@ -1,9 +1,9 @@
+import _ from "lodash";
+
 import { PgPromiseQuery, idb, pgp, redb } from "@/common/db";
 import { logger } from "@/common/logger";
 import { toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
-import { generateSchemaHash } from "@/orderbook/orders/utils";
-import _ from "lodash";
 
 export type TokenSet = {
   id: string;
@@ -16,11 +16,6 @@ export type TokenSet = {
 const isValid = (tokenSet: TokenSet) => {
   try {
     if (tokenSet.id !== `contract:${tokenSet.contract}`) {
-      return false;
-    }
-
-    const schemaHash = generateSchemaHash(tokenSet.schema);
-    if (schemaHash !== tokenSet.schemaHash) {
       return false;
     }
   } catch {
@@ -36,7 +31,7 @@ export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
   const valid: TokenSet[] = [];
   for (const tokenSet of tokenSets) {
     if (!isValid(tokenSet)) {
-      continue;
+      throw new Error("Invalid token set");
     }
 
     const { id, schemaHash, schema, contract } = tokenSet;
@@ -54,9 +49,9 @@ export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
           id: contract,
         }
       );
-      if (!collectionResult || Number(collectionResult.token_count) > config.maxItemsPerBid) {
-        // We don't support collection orders on large collections.
-        continue;
+      if (!collectionResult || Number(collectionResult.token_count) > config.maxTokenSetSize) {
+        // We don't support collection orders on large collections
+        throw new Error("Collection missing or too large");
       }
 
       queries.push({
@@ -117,7 +112,7 @@ export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
 
       valid.push(tokenSet);
     } catch (error) {
-      logger.error(
+      logger.info(
         "orderbook-contract-wide-set",
         `Failed to check/save token set ${JSON.stringify(tokenSet)}: ${error}`
       );

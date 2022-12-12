@@ -12,7 +12,7 @@ import { baseProvider } from "@/common/provider";
 import { bn, formatEth, regex, toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import { Sources } from "@/models/sources";
-import { generateBidDetails } from "@/orderbook/orders";
+import { generateBidDetailsV5 } from "@/orderbook/orders";
 import { getNftApproval } from "@/orderbook/orders/common/helpers";
 
 const version = "v3";
@@ -44,7 +44,6 @@ export const getExecuteSellV3Options: RouteOptions = {
       source: Joi.string()
         .lowercase()
         .pattern(regex.domain)
-        .required()
         .description("Filling source used for attribution. Example: `reservoir.market`"),
       referrer: Joi.string()
         .lowercase()
@@ -151,7 +150,7 @@ export const getExecuteSellV3Options: RouteOptions = {
           contract,
           tokenId,
           quantity: 1,
-          source: sourceId ? sources.get(sourceId).domain : null,
+          source: sourceId ? sources.get(sourceId)?.domain ?? null : null,
           // TODO: Add support for multiple currencies
           currency: Sdk.Common.Addresses.Weth[config.chainId],
           quote: formatEth(bestOrderResult.price),
@@ -164,8 +163,9 @@ export const getExecuteSellV3Options: RouteOptions = {
         return { path };
       }
 
-      const bidDetails = await generateBidDetails(
+      const bidDetails = await generateBidDetailsV5(
         {
+          id: bestOrderResult.id,
           kind: bestOrderResult.kind,
           rawData: bestOrderResult.raw_data,
         },
@@ -176,9 +176,11 @@ export const getExecuteSellV3Options: RouteOptions = {
         }
       );
 
-      const router = new Sdk.Router.Router(config.chainId, baseProvider);
+      const router = new Sdk.RouterV5.Router(config.chainId, baseProvider, {
+        x2y2ApiKey: config.x2y2ApiKey,
+      });
       const tx = await router.fillBidTx(bidDetails, query.taker, {
-        referrer: query.source,
+        source: query.source,
       });
 
       // Set up generic filling steps
@@ -206,7 +208,7 @@ export const getExecuteSellV3Options: RouteOptions = {
         },
       ];
 
-      // X2Y2 bids are to be filled directly (because the V5 router does not support them)
+      // X2Y2/Sudoswap bids are to be filled directly (because the V5 router does not support them)
       if (bidDetails.kind === "x2y2") {
         const isApproved = await getNftApproval(
           bidDetails.contract,
@@ -219,6 +221,33 @@ export const getExecuteSellV3Options: RouteOptions = {
             baseProvider,
             bidDetails.contract
           ).approveTransaction(query.taker, Sdk.X2Y2.Addresses.Exchange[config.chainId]);
+
+          steps[0].items.push({
+            status: "incomplete",
+            data: {
+              ...approveTx,
+              maxFeePerGas: query.maxFeePerGas ? bn(query.maxFeePerGas).toHexString() : undefined,
+              maxPriorityFeePerGas: query.maxPriorityFeePerGas
+                ? bn(query.maxPriorityFeePerGas).toHexString()
+                : undefined,
+            },
+          });
+        }
+      }
+      if (bidDetails.kind === "sudoswap") {
+        const isApproved = await getNftApproval(
+          bidDetails.contract,
+          query.taker,
+          Sdk.Sudoswap.Addresses.RouterWithRoyalties[config.chainId]
+        );
+        if (!isApproved) {
+          const approveTx = new Sdk.Common.Helpers.Erc721(
+            baseProvider,
+            bidDetails.contract
+          ).approveTransaction(
+            query.taker,
+            Sdk.Sudoswap.Addresses.RouterWithRoyalties[config.chainId]
+          );
 
           steps[0].items.push({
             status: "incomplete",

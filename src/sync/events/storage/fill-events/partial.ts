@@ -19,7 +19,7 @@ export const addEventsPartial = async (events: Event[]) => {
       order_kind: event.orderKind,
       order_id: event.orderId || null,
       order_side: event.orderSide,
-      order_source_id_int: event.orderSourceIdInt || null,
+      order_source_id_int: event.orderSourceId || null,
       maker: toBuffer(event.maker),
       taker: toBuffer(event.taker),
       price: event.price,
@@ -32,6 +32,7 @@ export const addEventsPartial = async (events: Event[]) => {
       currency: toBuffer(event.currency),
       currency_price: event.currencyPrice || null,
       usd_price: event.usdPrice || null,
+      is_primary: event.isPrimary || null,
     });
   }
 
@@ -62,6 +63,7 @@ export const addEventsPartial = async (events: Event[]) => {
         "currency",
         "currency_price",
         "usd_price",
+        "is_primary",
       ],
       { table: "fill_events_2" }
     );
@@ -93,28 +95,32 @@ export const addEventsPartial = async (events: Event[]) => {
           wash_trading_score,
           currency,
           currency_price,
-          usd_price
+          usd_price,
+          is_primary
         ) VALUES ${pgp.helpers.values(fillValues, columns)}
         ON CONFLICT DO NOTHING
         RETURNING
           fill_events_2.order_kind,
           fill_events_2.order_id,
           fill_events_2.timestamp,
-          fill_events_2.amount
+          fill_events_2.amount,
+          fill_events_2.order_source_id_int
       )
       INSERT INTO orders (
         id,
         kind,
         quantity_filled,
         fillability_status,
-        expiration
+        expiration,
+        source_id_int
       ) (
         SELECT
           x.order_id,
           MIN(x.order_kind),
           SUM(x.amount) AS amount,
           'filled'::order_fillability_status_t,
-          MIN(to_timestamp(x.timestamp))
+          MIN(to_timestamp(x.timestamp)),
+          MIN(x.order_source_id_int)
         FROM x
         WHERE x.order_id IS NOT NULL
         GROUP BY x.order_id
@@ -136,6 +142,7 @@ export const addEventsPartial = async (events: Event[]) => {
           END
         ),
         updated_at = now()
+      WHERE orders.quantity_remaining > 0
     `);
   }
 };

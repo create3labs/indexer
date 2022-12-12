@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { AddressZero } from "@ethersproject/constants";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
 import * as Sdk from "@0xlol/sdk";
@@ -17,10 +18,6 @@ import * as commonHelpers from "@/orderbook/orders/common/helpers";
 import * as looksRareSellToken from "@/orderbook/orders/looks-rare/build/sell/token";
 import * as looksRareCheck from "@/orderbook/orders/looks-rare/check";
 
-// OpenDao
-import * as openDaoSellToken from "@/orderbook/orders/opendao/build/sell/token";
-import * as openDaoCheck from "@/orderbook/orders/opendao/check";
-
 // Seaport
 import * as seaportSellToken from "@/orderbook/orders/seaport/build/sell/token";
 import * as seaportCheck from "@/orderbook/orders/seaport/check";
@@ -32,6 +29,10 @@ import * as x2y2Check from "@/orderbook/orders/x2y2/check";
 // ZeroExV4
 import * as zeroExV4SellToken from "@/orderbook/orders/zeroex-v4/build/sell/token";
 import * as zeroExV4Check from "@/orderbook/orders/zeroex-v4/check";
+
+// Universe
+import * as universeSellToken from "@/orderbook/orders/universe/build/sell/token";
+import * as universeCheck from "@/orderbook/orders/universe/check";
 
 const version = "v4";
 
@@ -56,8 +57,9 @@ export const getExecuteListV4Options: RouteOptions = {
       source: Joi.string()
         .lowercase()
         .pattern(regex.domain)
-        .required()
-        .description("Domain of the platform that created the order. Example: `chimpers.xyz`"),
+        .description(
+          `Domain of your app that is creating the order, e.g. \`myapp.xyz\`. This is used for filtering, and to attribute the "order source" of sales in on-chain analytics, to help your app get discovered. Lean more <a href='https://docs.reservoir.tools/docs/calldata-attribution'>here</a>`
+        ),
       params: Joi.array().items(
         Joi.object({
           token: Joi.string()
@@ -68,7 +70,7 @@ export const getExecuteListV4Options: RouteOptions = {
               "Filter to a particular token. Example: `0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63:123`"
             ),
           quantity: Joi.number().description(
-            "Quanity of tokens user is listing. Only compatible with ERC1155 tokens. Example: `5`"
+            "Quantity of tokens user is listing. Only compatible with ERC1155 tokens. Example: `5`"
           ),
           weiPrice: Joi.string()
             .pattern(regex.number)
@@ -77,13 +79,14 @@ export const getExecuteListV4Options: RouteOptions = {
               "Amount seller is willing to sell for in wei. Example: `1000000000000000000`"
             ),
           orderKind: Joi.string()
-            .valid("721ex", "looks-rare", "zeroex-v4", "seaport", "x2y2")
+            .valid("looks-rare", "zeroex-v4", "seaport", "seaport-forward", "x2y2", "universe")
             .default("seaport")
             .description("Exchange protocol used to create order. Example: `seaport`"),
           orderbook: Joi.string()
-            .valid("opensea", "looks-rare", "reservoir", "x2y2")
+            .valid("opensea", "looks-rare", "reservoir", "x2y2", "universe")
             .default("reservoir")
             .description("Orderbook where order is placed. Example: `Reservoir`"),
+          orderbookApiKey: Joi.string().description("Optional API key for the target orderbook"),
           automatedRoyalties: Joi.boolean()
             .default(true)
             .description("If true, royalties will be automatically included."),
@@ -117,6 +120,7 @@ export const getExecuteListV4Options: RouteOptions = {
     schema: Joi.object({
       steps: Joi.array().items(
         Joi.object({
+          id: Joi.string().required(),
           kind: Joi.string().valid("request", "signature", "transaction").required(),
           action: Joi.string().required(),
           description: Joi.string().required(),
@@ -141,11 +145,12 @@ export const getExecuteListV4Options: RouteOptions = {
     const payload = request.payload as any;
 
     try {
-      const maker = payload.maker;
+      let maker = payload.maker;
       const source = payload.source;
 
       // Set up generic listing steps
       const steps: {
+        id: string;
         action: string;
         description: string;
         kind: string;
@@ -156,13 +161,7 @@ export const getExecuteListV4Options: RouteOptions = {
         }[];
       }[] = [
         {
-          action: "Initialize wallet",
-          description:
-            "A one-time setup transaction to enable trading with the Wyvern Protocol (used by Open Sea)",
-          kind: "transaction",
-          items: [],
-        },
-        {
+          id: "nft-approval",
           action: "Approve NFT contract",
           description:
             "Each NFT collection you want to trade requires a one-time approval transaction",
@@ -170,6 +169,7 @@ export const getExecuteListV4Options: RouteOptions = {
           items: [],
         },
         {
+          id: "order-signature",
           action: "Authorize listing",
           description: "A free off-chain signature to create the listing",
           kind: "signature",
@@ -181,17 +181,13 @@ export const getExecuteListV4Options: RouteOptions = {
         const params = payload.params[i];
         const [contract, tokenId] = params.token.split(":");
 
-        // On Rinkeby, proxy ZeroEx V4 to 721ex
-        if (params.orderKind === "zeroex-v4" && config.chainId === 4) {
-          params.orderKind = "721ex";
-        }
-
         // For now, ERC20 listings are only supported on Seaport
         if (
           params.orderKind !== "seaport" &&
+          params.orderKind !== "universe" &&
           params.currency !== Sdk.Common.Addresses.Eth[config.chainId]
         ) {
-          throw new Error("ERC20 listings are only supported on Seaport");
+          throw new Error("ERC20 listings are only supported on Seaport and Universe");
         }
 
         // Handle fees
@@ -206,80 +202,6 @@ export const getExecuteListV4Options: RouteOptions = {
         }
 
         switch (params.orderKind) {
-          case "721ex": {
-            if (!["reservoir"].includes(params.orderbook)) {
-              throw Boom.badRequest("Only `reservoir` is supported as orderbook");
-            }
-
-            const order = await openDaoSellToken.build({
-              ...params,
-              maker,
-              contract,
-              tokenId,
-            });
-            if (!order) {
-              throw Boom.internal("Failed to generate order");
-            }
-
-            // Will be set if an approval is needed before listing
-            let approvalTx: TxData | undefined;
-
-            // Check the order's fillability
-            try {
-              await openDaoCheck.offChainCheck(order, { onChainApprovalRecheck: true });
-            } catch (error: any) {
-              switch (error.message) {
-                case "no-balance-no-approval":
-                case "no-balance": {
-                  // We cannot do anything if the user doesn't own the listed token
-                  throw Boom.badData("Maker does not own the listed token");
-                }
-
-                case "no-approval": {
-                  // Generate an approval transaction
-                  const kind = order.params.kind?.startsWith("erc721") ? "erc721" : "erc1155";
-                  approvalTx = (
-                    kind === "erc721"
-                      ? new Sdk.Common.Helpers.Erc721(baseProvider, order.params.nft)
-                      : new Sdk.Common.Helpers.Erc1155(baseProvider, order.params.nft)
-                  ).approveTransaction(maker, Sdk.OpenDao.Addresses.Exchange[config.chainId]);
-
-                  break;
-                }
-              }
-            }
-
-            steps[1].items.push({
-              status: approvalTx ? "incomplete" : "complete",
-              data: approvalTx,
-              orderIndex: i,
-            });
-            steps[2].items.push({
-              status: "incomplete",
-              data: {
-                sign: order.getSignatureData(),
-                post: {
-                  endpoint: "/order/v3",
-                  method: "POST",
-                  body: {
-                    order: {
-                      kind: "721ex",
-                      data: {
-                        ...order.params,
-                      },
-                    },
-                    orderbook: params.orderbook,
-                    source,
-                  },
-                },
-              },
-              orderIndex: i,
-            });
-
-            // Go on with the next listing
-            continue;
-          }
-
           case "zeroex-v4": {
             if (!["reservoir"].includes(params.orderbook)) {
               throw Boom.badRequest("Only `reservoir` is supported as orderbook");
@@ -323,12 +245,12 @@ export const getExecuteListV4Options: RouteOptions = {
               }
             }
 
-            steps[1].items.push({
+            steps[0].items.push({
               status: approvalTx ? "incomplete" : "complete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[1].items.push({
               status: "incomplete",
               data: {
                 sign: order.getSignatureData(),
@@ -343,6 +265,7 @@ export const getExecuteListV4Options: RouteOptions = {
                       },
                     },
                     orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
@@ -354,9 +277,20 @@ export const getExecuteListV4Options: RouteOptions = {
             continue;
           }
 
-          case "seaport": {
+          case "seaport":
+          case "seaport-forward": {
             if (!["reservoir", "opensea"].includes(params.orderbook)) {
               throw Boom.badRequest("Only `reservoir` and `opensea` are supported as orderbooks");
+            }
+
+            const isForward = params.orderKind === "seaport-forward";
+            if (isForward) {
+              maker = await new Sdk.Forward.Exchange(config.chainId).contract
+                .connect(baseProvider)
+                .vaults(maker);
+              if (maker === AddressZero) {
+                throw Boom.badRequest("Maker has no Forward vault");
+              }
             }
 
             const order = await seaportSellToken.build({
@@ -364,6 +298,7 @@ export const getExecuteListV4Options: RouteOptions = {
               maker,
               contract,
               tokenId,
+              orderType: isForward ? Sdk.Seaport.Types.OrderType.PARTIAL_OPEN : undefined,
             });
             if (!order) {
               throw Boom.internal("Failed to generate order");
@@ -386,6 +321,10 @@ export const getExecuteListV4Options: RouteOptions = {
                 case "no-approval": {
                   // Generate an approval transaction
 
+                  if (isForward) {
+                    throw Boom.badRequest("Token is not approved");
+                  }
+
                   const exchange = new Sdk.Seaport.Exchange(config.chainId);
                   const info = order.getInfo()!;
 
@@ -401,12 +340,12 @@ export const getExecuteListV4Options: RouteOptions = {
               }
             }
 
-            steps[1].items.push({
+            steps[0].items.push({
               status: approvalTx ? "incomplete" : "complete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[1].items.push({
               status: "incomplete",
               data: {
                 sign: order.getSignatureData(),
@@ -415,12 +354,13 @@ export const getExecuteListV4Options: RouteOptions = {
                   method: "POST",
                   body: {
                     order: {
-                      kind: "seaport",
+                      kind: params.orderKind,
                       data: {
                         ...order.params,
                       },
                     },
                     orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
@@ -489,12 +429,12 @@ export const getExecuteListV4Options: RouteOptions = {
               }
             }
 
-            steps[1].items.push({
+            steps[0].items.push({
               status: approvalTx ? "incomplete" : "complete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[1].items.push({
               status: "incomplete",
               data: {
                 sign: order.getSignatureData(),
@@ -509,6 +449,7 @@ export const getExecuteListV4Options: RouteOptions = {
                       },
                     },
                     orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
@@ -572,12 +513,12 @@ export const getExecuteListV4Options: RouteOptions = {
               }
             }
 
-            steps[1].items.push({
+            steps[0].items.push({
               status: approvalTx ? "incomplete" : "complete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[1].items.push({
               status: "incomplete",
               data: {
                 sign: new Sdk.X2Y2.Exchange(
@@ -595,12 +536,96 @@ export const getExecuteListV4Options: RouteOptions = {
                       },
                     },
                     orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
               },
               orderIndex: i,
             });
+
+            // Go on with the next listing
+            continue;
+          }
+
+          case "universe": {
+            if (!["universe"].includes(params.orderbook)) {
+              throw Boom.badRequest("Only `universe` is supported as orderbook");
+            }
+
+            const order = await universeSellToken.build({
+              ...params,
+              maker,
+              contract,
+              tokenId,
+            });
+            if (!order) {
+              throw Boom.internal("Failed to generate order");
+            }
+
+            // Will be set if an approval is needed before listing
+            let approvalTx: TxData | undefined;
+
+            // Check the order's fillability
+            try {
+              await universeCheck.offChainCheck(order, { onChainApprovalRecheck: true });
+            } catch (error: any) {
+              switch (error.message) {
+                case "no-balance-no-approval":
+                case "no-balance": {
+                  // We cannot do anything if the user doesn't own the listed token
+                  throw Boom.badData("Maker does not own the listed token");
+                }
+
+                case "no-approval": {
+                  // Generate an approval transaction
+                  const kind = order.params.kind?.startsWith("erc721") ? "erc721" : "erc1155";
+                  approvalTx = (
+                    kind === "erc721"
+                      ? new Sdk.Common.Helpers.Erc721(
+                          baseProvider,
+                          order.params.make.assetType.contract!
+                        )
+                      : new Sdk.Common.Helpers.Erc1155(
+                          baseProvider,
+                          order.params.make.assetType.contract!
+                        )
+                  ).approveTransaction(maker, Sdk.Universe.Addresses.Exchange[config.chainId]);
+
+                  break;
+                }
+              }
+            }
+
+            steps[0].items.push({
+              status: approvalTx ? "incomplete" : "complete",
+              data: approvalTx,
+              orderIndex: i,
+            });
+            steps[1].items.push({
+              status: "incomplete",
+              data: {
+                sign: order.getSignatureData(),
+                post: {
+                  endpoint: "/order/v3",
+                  method: "POST",
+                  body: {
+                    order: {
+                      kind: "universe",
+                      data: {
+                        ...order.params,
+                      },
+                    },
+                    orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
+                    source,
+                  },
+                },
+              },
+              orderIndex: i,
+            });
+            // Go on with the next listing
+            continue;
           }
         }
       }

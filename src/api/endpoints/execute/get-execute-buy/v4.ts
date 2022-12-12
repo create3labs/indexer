@@ -4,7 +4,7 @@ import { AddressZero } from "@ethersproject/constants";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
 import * as Sdk from "@0xlol/sdk";
-import { ListingDetails } from "@0xlol/sdk/dist/router/types";
+import { ListingDetails } from "@0xlol/sdk/dist/router/v5/types";
 import Joi from "joi";
 
 import { inject } from "@/api/index";
@@ -15,17 +15,18 @@ import { bn, formatPrice, fromBuffer, regex, toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import { Sources } from "@/models/sources";
 import { OrderKind } from "@/orderbook/orders";
-import { generateListingDetails } from "@/orderbook/orders";
+import { generateListingDetailsV5 } from "@/orderbook/orders";
 import { getCurrency } from "@/utils/currencies";
 
 const version = "v4";
 
 export const getExecuteBuyV4Options: RouteOptions = {
   description: "Buy tokens",
-  tags: ["api", "Router"],
+  tags: ["api", "x-deprecated"],
   plugins: {
     "hapi-swagger": {
       order: 10,
+      deprecated: true,
     },
   },
   validate: {
@@ -35,7 +36,7 @@ export const getExecuteBuyV4Options: RouteOptions = {
         Joi.object({
           kind: Joi.string()
             .lowercase()
-            .valid("opensea", "looks-rare", "721ex", "zeroex-v4", "seaport", "x2y2")
+            .valid("opensea", "looks-rare", "zeroex-v4", "seaport", "x2y2", "universe")
             .required(),
           data: Joi.object().required(),
         })
@@ -49,7 +50,7 @@ export const getExecuteBuyV4Options: RouteOptions = {
         .integer()
         .positive()
         .description(
-          "Quanity of tokens user is buying. Only compatible when buying a single ERC1155 token. Example: `5`"
+          "Quantity of tokens user is buying. Only compatible when buying a single ERC1155 token. Example: `5`"
         ),
       taker: Joi.string()
         .lowercase()
@@ -58,6 +59,10 @@ export const getExecuteBuyV4Options: RouteOptions = {
         .description(
           "Address of wallet filling the order. Example: `0xF296178d553C8Ec21A2fBD2c5dDa8CA9ac905A00`"
         ),
+      relayer: Joi.string()
+        .lowercase()
+        .pattern(regex.address)
+        .description("Address of wallet relaying the filling transaction"),
       onlyPath: Joi.boolean()
         .default(false)
         .description("If true, only the path will be returned."),
@@ -70,12 +75,16 @@ export const getExecuteBuyV4Options: RouteOptions = {
       preferredOrderSource: Joi.string()
         .lowercase()
         .pattern(regex.domain)
-        .when("tokens", { is: Joi.exist(), then: Joi.allow(), otherwise: Joi.forbidden() }),
+        .when("tokens", { is: Joi.exist(), then: Joi.allow(), otherwise: Joi.forbidden() })
+        .description(
+          "If there are multiple listings with equal best price, prefer this source over others.\nNOTE: if you want to fill a listing that is not the best priced, you need to pass a specific order ID."
+        ),
       source: Joi.string()
         .lowercase()
         .pattern(regex.domain)
-        .required()
-        .description("Filling source used for attribution. Example: `reservoir.market`"),
+        .description(
+          `Domain of your app that is filling the order, e.g. \`myapp.xyz\`. This is used to attribute the "fill source" of sales in on-chain analytics, to help your app get discovered. Learn more <a href='https://docs.reservoir.tools/docs/calldata-attribution'>here</a>`
+        ),
       feesOnTop: Joi.array()
         .items(Joi.string().pattern(regex.fee))
         .description(
@@ -84,6 +93,9 @@ export const getExecuteBuyV4Options: RouteOptions = {
       partial: Joi.boolean()
         .default(false)
         .description("If true, partial orders will be accepted."),
+      skipErrors: Joi.boolean()
+        .default(false)
+        .description("If true, then skip any errors in processing."),
       maxFeePerGas: Joi.string()
         .pattern(regex.number)
         .description("Optional. Set custom gas price."),
@@ -183,15 +195,16 @@ export const getExecuteBuyV4Options: RouteOptions = {
           contract: token.contract,
           tokenId: token.tokenId,
           quantity: token.quantity ?? 1,
-          source: order.sourceId !== null ? sources.get(order.sourceId)?.domain : null,
+          source: order.sourceId !== null ? sources.get(order.sourceId)?.domain ?? null : null,
           currency: order.currency,
           quote: formatPrice(rawQuote, (await getCurrency(order.currency)).decimals),
           rawQuote: rawQuote.toString(),
         });
 
         listingDetails.push(
-          generateListingDetails(
+          generateListingDetailsV5(
             {
+              id: order.id,
               kind: order.kind,
               currency: order.currency,
               rawData: order.rawData,
@@ -227,10 +240,10 @@ export const getExecuteBuyV4Options: RouteOptions = {
             },
             payload: { order },
           }).then((response) => JSON.parse(response.payload));
-          if (!response.orderId) {
-            throw Boom.badData("Raw order already exists or failed to be processed");
-          } else {
+          if (response.orderId) {
             payload.orderIds.push(response.orderId);
+          } else {
+            throw Boom.badData("Raw order failed to get processed");
           }
         }
       }
@@ -258,16 +271,33 @@ export const getExecuteBuyV4Options: RouteOptions = {
                 AND orders.side = 'sell'
                 AND orders.fillability_status = 'fillable'
                 AND orders.approval_status = 'approved'
+                AND orders.quantity_remaining >= $/quantity/
                 AND (orders.taker = '\\x0000000000000000000000000000000000000000' OR orders.taker IS NULL)
                 AND orders.currency = $/currency/
             `,
             {
               id: orderId,
               currency: toBuffer(payload.currency),
+              quantity: payload.quantity ?? 1,
             }
           );
           if (!orderResult) {
-            throw Boom.badData(`Could not use order id ${orderId}`);
+            if (!payload.skipErrors) {
+              throw Boom.badData(`Could not use order id ${orderId}`);
+            } else {
+              continue;
+            }
+          }
+
+          if (payload.quantity > 1) {
+            if (orderResult.token_kind !== "erc1155") {
+              throw Boom.badRequest("Only ERC1155 orders support a quantity");
+            }
+            if (payload.orderIds.length > 1) {
+              throw Boom.badRequest(
+                "When specifying a quantity only a single ERC1155 order can get filled"
+              );
+            }
           }
 
           await addToPath(
@@ -283,6 +313,7 @@ export const getExecuteBuyV4Options: RouteOptions = {
               kind: orderResult.token_kind,
               contract: fromBuffer(orderResult.contract),
               tokenId: orderResult.token_id,
+              quantity: payload.quantity ?? 1,
             }
           );
         }
@@ -409,6 +440,16 @@ export const getExecuteBuyV4Options: RouteOptions = {
               throw Boom.badRequest("No available orders");
             }
 
+            if (
+              bestOrdersResult.length &&
+              bestOrdersResult[0].token_kind === "erc1155" &&
+              payload.tokens.length > 1
+            ) {
+              throw Boom.badData(
+                "When specifying a quantity greater than one, only a single ERC1155 token can get filled"
+              );
+            }
+
             let totalQuantityToFill = Number(payload.quantity);
             for (const {
               id,
@@ -449,14 +490,13 @@ export const getExecuteBuyV4Options: RouteOptions = {
         }
       }
 
+      if (!path.length) {
+        throw Boom.badRequest("No fillable orders");
+      }
+
       if (payload.quantity > 1) {
         if (!listingDetails.every((d) => d.contractKind === "erc1155")) {
           throw Boom.badData("Only ERC1155 tokens support a quantity greater than one");
-        }
-        if (listingDetails.length > 1) {
-          throw Boom.badData(
-            "When specifying a quantity greater than one, only a single ERC1155 token can get filled"
-          );
         }
       }
 
@@ -465,15 +505,26 @@ export const getExecuteBuyV4Options: RouteOptions = {
         return { path };
       }
 
-      const router = new Sdk.Router.Router(config.chainId, baseProvider);
+      const skippedIndexes: number[] = [];
+      const router = new Sdk.RouterV5.Router(config.chainId, baseProvider, {
+        x2y2ApiKey: config.x2y2ApiKey,
+      });
       const tx = await router.fillListingsTx(listingDetails, payload.taker, {
-        referrer: payload.source,
+        source: payload.source,
         fee: {
           recipient: payload.referrer ?? AddressZero,
           bps: payload.referrerFeeBps ?? 0,
         },
         partial: payload.partial,
+        skipErrors: payload.skipErrors,
+        skippedIndexes,
         forceRouter: payload.forceRouter,
+        directFillingData: {
+          conduitKey:
+            config.chainId === 1
+              ? "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000"
+              : undefined,
+        },
       });
 
       // Set up generic filling steps
@@ -515,16 +566,19 @@ export const getExecuteBuyV4Options: RouteOptions = {
           throw Boom.badData("Balance too low to proceed with transaction");
         }
 
-        if (!listingDetails.every((d) => d.kind === "seaport")) {
-          throw new Error("Only Seaport ERC20 listings are supported");
+        let conduit: string;
+        if (listingDetails.every((d) => d.kind === "seaport")) {
+          // TODO: Have a default conduit for each exchange per chain
+          conduit =
+            config.chainId === 1
+              ? // Use OpenSea's conduit for sharing approvals
+                "0x1e0049783f008a0085193e00003d00cd54003c71"
+              : Sdk.Seaport.Addresses.Exchange[config.chainId];
+        } else if (listingDetails.every((d) => d.kind === "universe")) {
+          conduit = Sdk.Universe.Addresses.Exchange[config.chainId];
+        } else {
+          throw new Error("Only Seaport and Universe ERC20 listings are supported");
         }
-
-        // TODO: Have a default conduit for each exchange per chain
-        const conduit =
-          config.chainId === 1
-            ? // Use OpenSea's conduit for sharing approvals
-              "0x1e0049783f008a0085193e00003d00cd54003c71"
-            : Sdk.Seaport.Addresses.Exchange[config.chainId];
 
         const allowance = await erc20.getAllowance(payload.taker, conduit);
         if (bn(allowance).lt(totalPrice)) {
@@ -533,6 +587,7 @@ export const getExecuteBuyV4Options: RouteOptions = {
             status: "incomplete",
             data: {
               ...tx,
+              from: payload.relayer ? payload.relayer : tx.from,
               maxFeePerGas: payload.maxFeePerGas
                 ? bn(payload.maxFeePerGas).toHexString()
                 : undefined,
@@ -548,6 +603,7 @@ export const getExecuteBuyV4Options: RouteOptions = {
         status: "incomplete",
         data: {
           ...tx,
+          from: payload.relayer ? payload.relayer : tx.from,
           maxFeePerGas: payload.maxFeePerGas ? bn(payload.maxFeePerGas).toHexString() : undefined,
           maxPriorityFeePerGas: payload.maxPriorityFeePerGas
             ? bn(payload.maxPriorityFeePerGas).toHexString()
@@ -557,7 +613,7 @@ export const getExecuteBuyV4Options: RouteOptions = {
 
       return {
         steps,
-        path,
+        path: path.filter((_, i) => !skippedIndexes.includes(i)),
       };
     } catch (error) {
       logger.error(`get-execute-buy-${version}-handler`, `Handler failure: ${error}`);

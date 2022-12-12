@@ -1,21 +1,22 @@
-import _ from "lodash";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { HashZero } from "@ethersproject/constants";
 import { Job, Queue, QueueScheduler, Worker } from "bullmq";
+import _ from "lodash";
 
-import { idb } from "@/common/db";
+import { idb, redb } from "@/common/db";
 import { logger } from "@/common/logger";
 import { redis } from "@/common/redis";
 import { fromBuffer, toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import { TriggerKind } from "@/jobs/order-updates/types";
 
-import * as collectionUpdatesFloorAsk from "@/jobs/collection-updates/floor-queue";
-import * as handleNewSellOrder from "@/jobs/update-attribute/handle-new-sell-order";
 import * as handleNewBuyOrder from "@/jobs/update-attribute/handle-new-buy-order";
 import * as updateNftBalanceFloorAskPriceQueue from "@/jobs/nft-balance-updates/update-floor-ask-price-queue";
 import * as processActivityEvent from "@/jobs/activities/process-activity-event";
 import * as collectionUpdatesTopBid from "@/jobs/collection-updates/top-bid-queue";
+import * as tokenUpdatesFloorAsk from "@/jobs/token-updates/floor-queue";
+import * as tokenUpdatesNormalizedFloorAsk from "@/jobs/token-updates/normalized-floor-queue";
 
 const QUEUE_NAME = "order-updates-by-id";
 
@@ -81,7 +82,7 @@ if (config.doBackgroundWork) {
         if (side && tokenSetId) {
           // If the order is a complex 'buy' order, then recompute the top bid cache on the token set
           if (side === "buy" && !tokenSetId.startsWith("token")) {
-            const buyOrderResult = await idb.manyOrNone(
+            let buyOrderResult = await idb.manyOrNone(
               `
                 WITH x AS (
                   SELECT
@@ -121,6 +122,34 @@ if (config.doBackgroundWork) {
               { tokenSetId }
             );
 
+            if (!buyOrderResult.length && trigger.kind === "revalidation") {
+              // When revalidating, force revalidation of the attribute / collection.
+              const tokenSetsResult = await redb.manyOrNone(
+                `
+                  SELECT
+                    token_sets.collection_id,
+                    token_sets.attribute_id
+                  FROM token_sets
+                  WHERE token_sets.id = $/tokenSetId/
+                `,
+                {
+                  tokenSetId,
+                }
+              );
+
+              if (tokenSetsResult.length) {
+                buyOrderResult = tokenSetsResult.map(
+                  (result: { collection_id: any; attribute_id: any }) => ({
+                    kind: trigger.kind,
+                    collectionId: result.collection_id,
+                    attributeId: result.attribute_id,
+                    txHash: trigger.txHash || null,
+                    txTimestamp: trigger.txTimestamp || null,
+                  })
+                );
+              }
+            }
+
             for (const result of buyOrderResult) {
               if (!_.isNull(result.attributeId)) {
                 await handleNewBuyOrder.addToQueue(result);
@@ -140,152 +169,18 @@ if (config.doBackgroundWork) {
           }
 
           if (side === "sell") {
-            // Atomically update the cache and trigger an api event if needed
-            const sellOrderResult = await idb.oneOrNone(
-              `
-                WITH z AS (
-                  SELECT
-                    x.contract,
-                    x.token_id,
-                    y.order_id,
-                    y.value,
-                    y.currency,
-                    y.currency_value,
-                    y.maker,
-                    y.valid_between,
-                    y.nonce,
-                    y.source_id_int,
-                    y.is_reservoir
-                  FROM (
-                    SELECT
-                      token_sets_tokens.contract,
-                      token_sets_tokens.token_id
-                    FROM token_sets_tokens
-                    WHERE token_sets_tokens.token_set_id = $/tokenSetId/
-                  ) x LEFT JOIN LATERAL (
-                    SELECT
-                      orders.id AS order_id,
-                      orders.value,
-                      orders.currency,
-                      orders.currency_value,
-                      orders.maker,
-                      orders.valid_between,
-                      orders.source_id_int,
-                      orders.nonce,
-                      orders.is_reservoir
-                    FROM orders
-                    JOIN token_sets_tokens
-                      ON orders.token_set_id = token_sets_tokens.token_set_id
-                    WHERE token_sets_tokens.contract = x.contract
-                      AND token_sets_tokens.token_id = x.token_id
-                      AND orders.side = 'sell'
-                      AND orders.fillability_status = 'fillable'
-                      AND orders.approval_status = 'approved'
-                      AND (orders.taker = '\\x0000000000000000000000000000000000000000' OR orders.taker IS NULL)
-                    ORDER BY orders.value, orders.fee_bps
-                    LIMIT 1
-                  ) y ON TRUE
-                ),
-                w AS (
-                  UPDATE tokens SET
-                    floor_sell_id = z.order_id,
-                    floor_sell_value = z.value,
-                    floor_sell_currency = z.currency,
-                    floor_sell_currency_value = z.currency_value,
-                    floor_sell_maker = z.maker,
-                    floor_sell_valid_from = least(
-                      2147483647::NUMERIC,
-                      date_part('epoch', lower(z.valid_between))
-                    )::INT,
-                    floor_sell_valid_to = least(
-                      2147483647::NUMERIC,
-                      coalesce(
-                        nullif(date_part('epoch', upper(z.valid_between)), 'Infinity'),
-                        0
-                      )
-                    )::INT,
-                    floor_sell_source_id_int = z.source_id_int,
-                    floor_sell_is_reservoir = z.is_reservoir,
-                    updated_at = now()
-                  FROM z
-                  WHERE tokens.contract = z.contract
-                    AND tokens.token_id = z.token_id
-                    AND (
-                      tokens.floor_sell_id IS DISTINCT FROM z.order_id
-                      OR tokens.floor_sell_maker IS DISTINCT FROM z.maker
-                      OR tokens.floor_sell_value IS DISTINCT FROM z.value
-                    )
-                  RETURNING
-                    z.contract,
-                    z.token_id,
-                    z.order_id AS new_floor_sell_id,
-                    z.maker AS new_floor_sell_maker,
-                    z.value AS new_floor_sell_value,
-                    z.valid_between AS new_floor_sell_valid_between,
-                    z.nonce AS new_floor_sell_nonce,
-                    z.source_id_int AS new_floor_sell_source_id_int,
-                    (
-                      SELECT tokens.floor_sell_value FROM tokens
-                      WHERE tokens.contract = z.contract
-                        AND tokens.token_id = z.token_id
-                    ) AS old_floor_sell_value
-                )
-                INSERT INTO token_floor_sell_events(
-                  kind,
-                  contract,
-                  token_id,
-                  order_id,
-                  maker,
-                  price,
-                  source_id_int,
-                  valid_between,
-                  nonce,
-                  previous_price,
-                  tx_hash,
-                  tx_timestamp
-                )
-                SELECT
-                  $/kind/ AS kind,
-                  w.contract,
-                  w.token_id,
-                  w.new_floor_sell_id AS order_id,
-                  w.new_floor_sell_maker AS maker,
-                  w.new_floor_sell_value AS price,
-                  w.new_floor_sell_source_id_int AS source_id_int,
-                  w.new_floor_sell_valid_between AS valid_between,
-                  w.new_floor_sell_nonce AS nonce,
-                  w.old_floor_sell_value AS previous_price,
-                  $/txHash/ AS tx_hash,
-                  $/txTimestamp/ AS tx_timestamp
-                FROM w
-                RETURNING
-                  kind,
-                  contract,
-                  token_id AS "tokenId",
-                  price,
-                  previous_price AS "previousPrice",
-                  tx_hash AS "txHash",
-                  tx_timestamp AS "txTimestamp"
-              `,
-              {
-                tokenSetId,
-                kind: trigger.kind,
-                txHash: trigger.txHash ? toBuffer(trigger.txHash) : null,
-                txTimestamp: trigger.txTimestamp || null,
-              }
-            );
+            // Update token floor
+            const floorAskInfo = {
+              kind: trigger.kind,
+              tokenSetId,
+              txHash: trigger.txHash || null,
+              txTimestamp: trigger.txTimestamp || null,
+            };
 
-            if (sellOrderResult) {
-              // Update attributes floor
-              sellOrderResult.contract = fromBuffer(sellOrderResult.contract);
-              await handleNewSellOrder.addToQueue(sellOrderResult);
-
-              // Update collection floor
-              sellOrderResult.txHash = sellOrderResult.txHash
-                ? fromBuffer(sellOrderResult.txHash)
-                : null;
-              await collectionUpdatesFloorAsk.addToQueue([sellOrderResult]);
-            }
+            await Promise.all([
+              tokenUpdatesFloorAsk.addToQueue([floorAskInfo]),
+              tokenUpdatesNormalizedFloorAsk.addToQueue([floorAskInfo]),
+            ]);
           }
 
           if (order) {
@@ -429,10 +324,11 @@ if (config.doBackgroundWork) {
             if (trigger.kind == "cancel") {
               const eventData = {
                 orderId: order.id,
+                orderSourceIdInt: order.sourceIdInt,
                 contract: fromBuffer(order.contract),
                 tokenId: order.tokenId,
                 maker: fromBuffer(order.maker),
-                price: order.value,
+                price: order.price,
                 amount: order.quantityRemaining,
                 transactionHash: trigger.txHash,
                 logIndex: trigger.logIndex,
@@ -459,10 +355,11 @@ if (config.doBackgroundWork) {
             ) {
               const eventData = {
                 orderId: order.id,
+                orderSourceIdInt: order.sourceIdInt,
                 contract: fromBuffer(order.contract),
                 tokenId: order.tokenId,
                 maker: fromBuffer(order.maker),
-                price: order.value,
+                price: order.price,
                 amount: order.quantityRemaining,
                 timestamp: Date.now() / 1000,
               };
@@ -493,7 +390,7 @@ if (config.doBackgroundWork) {
         throw error;
       }
     },
-    { connection: redis.duplicate(), concurrency: 15 }
+    { connection: redis.duplicate(), concurrency: 20 }
   );
   worker.on("error", (error) => {
     logger.error(QUEUE_NAME, `Worker errored: ${error}`);

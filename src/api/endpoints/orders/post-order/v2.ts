@@ -4,11 +4,13 @@ import { splitSignature } from "@ethersproject/bytes";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
 import * as Sdk from "@0xlol/sdk";
+import { EventType } from "@opensea/stream-js";
 import Joi from "joi";
 
 import { logger } from "@/common/logger";
 import { config } from "@/config/index";
 import * as orders from "@/orderbook/orders";
+import { handleEvent } from "@/websockets/opensea/index";
 
 import * as postOrderExternal from "@/jobs/orderbook/post-order-external";
 
@@ -32,7 +34,7 @@ export const postOrderV2Options: RouteOptions = {
       order: Joi.object({
         kind: Joi.string()
           .lowercase()
-          .valid("opensea", "looks-rare", "721ex", "zeroex-v4", "seaport")
+          .valid("opensea", "looks-rare", "zeroex-v4", "seaport", "seaport-partial", "x2y2")
           .required(),
         data: Joi.object().required(),
       }),
@@ -116,6 +118,13 @@ export const postOrderV2Options: RouteOptions = {
             collection,
           },
         };
+      } else if (collection) {
+        schema = {
+          kind: "collection",
+          data: {
+            collection,
+          },
+        };
       } else if (tokenSetId) {
         schema = {
           kind: "token-set",
@@ -126,26 +135,6 @@ export const postOrderV2Options: RouteOptions = {
       }
 
       switch (order.kind) {
-        case "721ex": {
-          if (orderbook !== "reservoir") {
-            throw new Error("Unsupported orderbook");
-          }
-
-          const orderInfo: orders.openDao.OrderInfo = {
-            orderParams: order.data,
-            metadata: {
-              schema,
-              source,
-            },
-          };
-          const [result] = await orders.openDao.save([orderInfo]);
-          if (result.status === "success") {
-            return { message: "Success", orderId: result.id };
-          } else {
-            throw Boom.badRequest(result.status);
-          }
-        }
-
         case "zeroex-v4": {
           if (orderbook !== "reservoir") {
             throw new Error("Unsupported orderbook");
@@ -158,11 +147,19 @@ export const postOrderV2Options: RouteOptions = {
               source,
             },
           };
+
+          // Only the relayer can post Coinbase NFT orders
+          if (orderInfo.orderParams.cbOrderId) {
+            throw new Error("Unauthorized");
+          }
+
           const [result] = await orders.zeroExV4.save([orderInfo]);
           if (result.status === "success") {
             return { message: "Success", orderId: result.id };
           } else {
-            throw Boom.badRequest(result.status);
+            const error = Boom.badRequest(result.status);
+            error.output.payload.orderId = result.id;
+            throw error;
           }
         }
 
@@ -172,6 +169,7 @@ export const postOrderV2Options: RouteOptions = {
           }
 
           const orderInfo: orders.seaport.OrderInfo = {
+            kind: "full",
             orderParams: order.data,
             isReservoir: orderbook === "reservoir",
             metadata: {
@@ -183,11 +181,13 @@ export const postOrderV2Options: RouteOptions = {
           const [result] = await orders.seaport.save([orderInfo]);
 
           if (result.status !== "success") {
-            throw Boom.badRequest(result.status);
+            const error = Boom.badRequest(result.status);
+            error.output.payload.orderId = result.id;
+            throw error;
           }
 
           if (orderbook === "opensea") {
-            await postOrderExternal.addToQueue(order.data, orderbook, orderbookApiKey);
+            await postOrderExternal.addToQueue(result.id, order.data, orderbook, orderbookApiKey);
 
             logger.info(
               `post-order-${version}-handler`,
@@ -195,6 +195,32 @@ export const postOrderV2Options: RouteOptions = {
                 result.id
               }`
             );
+          }
+
+          return { message: "Success", orderId: result.id };
+        }
+
+        case "seaport-partial": {
+          if (!["reservoir"].includes(orderbook)) {
+            throw new Error("Unsupported orderbook");
+          }
+
+          const orderParams = handleEvent(order.data.event_type as EventType, order.data.payload);
+          if (!orderParams) {
+            throw new Error("Could not parse order");
+          }
+
+          const orderInfo: orders.seaport.OrderInfo = {
+            kind: "partial",
+            orderParams,
+          };
+
+          const [result] = await orders.seaport.save([orderInfo]);
+
+          if (result.status !== "success") {
+            const error = Boom.badRequest(result.status);
+            error.output.payload.orderId = result.id;
+            throw error;
           }
 
           return { message: "Success", orderId: result.id };
@@ -216,11 +242,13 @@ export const postOrderV2Options: RouteOptions = {
           const [result] = await orders.looksRare.save([orderInfo]);
 
           if (result.status !== "success") {
-            throw Boom.badRequest(result.status);
+            const error = Boom.badRequest(result.status);
+            error.output.payload.orderId = result.id;
+            throw error;
           }
 
           if (orderbook === "looks-rare") {
-            await postOrderExternal.addToQueue(order.data, orderbook, orderbookApiKey);
+            await postOrderExternal.addToQueue(result.id, order.data, orderbook, orderbookApiKey);
 
             logger.info(
               `post-order-${version}-handler`,
@@ -244,6 +272,7 @@ export const postOrderV2Options: RouteOptions = {
           });
 
           const orderInfo: orders.seaport.OrderInfo = {
+            kind: "full",
             orderParams: orderObject.params,
             metadata: {
               schema,
@@ -253,7 +282,32 @@ export const postOrderV2Options: RouteOptions = {
           const [result] = await orders.seaport.save([orderInfo]);
 
           if (result.status !== "success") {
-            throw Boom.badRequest(result.status);
+            const error = Boom.badRequest(result.status);
+            error.output.payload.orderId = result.id;
+            throw error;
+          }
+
+          return { message: "Success", orderId: result.id };
+        }
+
+        case "x2y2": {
+          if (orderbook !== "reservoir") {
+            throw new Error("Unsupported orderbook");
+          }
+
+          const orderInfo: orders.x2y2.OrderInfo = {
+            orderParams: order.data,
+            metadata: {
+              schema,
+            },
+          };
+
+          const [result] = await orders.x2y2.save([orderInfo]);
+
+          if (result.status !== "success") {
+            const error = Boom.badRequest(result.status);
+            error.output.payload.orderId = result.id;
+            throw error;
           }
 
           return { message: "Success", orderId: result.id };

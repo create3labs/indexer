@@ -15,6 +15,7 @@ import {
   toBuffer,
 } from "@/common/utils";
 import { Sources } from "@/models/sources";
+import { Assets } from "@/utils/assets";
 
 const version = "v4";
 
@@ -454,7 +455,7 @@ export const getTokensDetailsV4Options: RouteOptions = {
             tokenId,
             name: r.name,
             description: r.description,
-            image: r.image,
+            image: Assets.getLocalAssetsLink(r.image),
             media: r.media,
             kind: r.kind,
             isFlagged: Boolean(Number(r.is_flagged)),
@@ -462,7 +463,7 @@ export const getTokensDetailsV4Options: RouteOptions = {
             collection: {
               id: r.collection_id,
               name: r.collection_name,
-              image: r.collection_image,
+              image: Assets.getLocalAssetsLink(r.image),
               slug: r.slug,
             },
             lastBuy: {
@@ -499,8 +500,8 @@ export const getTokensDetailsV4Options: RouteOptions = {
               source: {
                 id: source?.address,
                 domain: source?.domain,
-                name: source?.metadata.title || source?.name,
-                icon: source?.metadata.icon,
+                name: source?.getTitle(),
+                icon: source?.getIcon(),
                 url: source?.metadata.url,
               },
             },

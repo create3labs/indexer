@@ -28,8 +28,21 @@ if (config.doBackgroundWork) {
   const worker = new Worker(
     QUEUE_NAME,
     async () => {
+      const lockKey = `realtime-queue-lock`;
       try {
-        logger.info(QUEUE_NAME, `Running background worker`);
+        const lock = await redis.get(lockKey);
+        if (lock) {
+          return;
+        } else {
+          // The lock will ensure only a single process will run the job at any point in time
+          await redis.set(
+            lockKey,
+            "locked",
+            "EX",
+            getNetworkSettings().realtimeSyncFrequencySeconds
+          );
+        }
+
         // We allow syncing of up to `maxBlocks` blocks behind the head
         // of the blockchain. If we lag behind more than that, then all
         // previous blocks that we cannot cover here will be relayed to
@@ -68,6 +81,10 @@ if (config.doBackgroundWork) {
 
         // Send any remaining blocks to the backfill queue
         if (localBlock < fromBlock) {
+          logger.info(
+            QUEUE_NAME,
+            `Out of sync: local block ${localBlock} and upstream block ${fromBlock}`
+          );
           await eventsSyncBackfill.addToQueue(localBlock, fromBlock - 1);
         }
 
@@ -76,10 +93,14 @@ if (config.doBackgroundWork) {
         // once, which is exactly what we are looking for (since events for the
         // latest blocks might be missing due to upstream chain reorgs):
         // https://ethereum.stackexchange.com/questions/109660/eth-getlogs-and-some-missing-logs
-        await redis.set(`${QUEUE_NAME}-last-block`, headBlock - 5);
+        const delay = 0;
+
+        await redis.set(`${QUEUE_NAME}-last-block`, headBlock - delay);
       } catch (error) {
         logger.error(QUEUE_NAME, `Events realtime syncing failed: ${error}`);
         throw error;
+      } finally {
+        await redis.del(lockKey);
       }
     },
     { connection: redis.duplicate(), concurrency: 3 }

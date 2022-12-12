@@ -1,5 +1,6 @@
 import { RouteOptions } from "@hapi/hapi";
 import Joi from "joi";
+
 import { config } from "@/config/index";
 
 type Marketplace = {
@@ -116,6 +117,10 @@ export const getMarketplaces: RouteOptions = {
           break;
         }
         case 4: {
+          listableOrderbooks = ["reservoir", "opensea", "looks-rare"];
+          break;
+        }
+        case 5: {
           listableOrderbooks = ["reservoir", "opensea", "looks-rare"];
           break;
         }

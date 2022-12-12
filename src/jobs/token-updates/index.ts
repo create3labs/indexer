@@ -5,7 +5,6 @@
 
 import "@/jobs/token-updates/mint-queue";
 import "@/jobs/token-updates/token-refresh-cache";
-import "@/jobs/token-updates/non-flagged-token-set";
 import "@/jobs/token-updates/fetch-collection-metadata";
-import "@/jobs/token-updates/sync-collection-flag-status";
-import "@/jobs/token-updates/sync-tokens-flag-status";
+import "@/jobs/token-updates/floor-queue";
+import "@/jobs/token-updates/normalized-floor-queue";

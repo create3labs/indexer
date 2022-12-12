@@ -4,17 +4,28 @@ import _ from "lodash";
 import { getActivityHash } from "@/jobs/activities/utils";
 import { UserActivitiesEntityInsertParams } from "@/models/user-activities/user-activities-entity";
 import { UserActivities } from "@/models/user-activities";
+import { Tokens } from "@/models/tokens";
+import { logger } from "@/common/logger";
 
 export class AskActivity {
   public static async handleEvent(data: NewSellOrderEventData) {
+    const collectionId = await Tokens.getCollectionId(data.contract, data.tokenId);
+
+    // If no collection found
+    if (_.isNull(collectionId)) {
+      logger.warn("ask-activity", `No collection found for ${JSON.stringify(data)}`);
+      return;
+    }
+
     const activityHash = getActivityHash(ActivityType.ask, data.orderId);
 
     const activity = {
       hash: activityHash,
       type: ActivityType.ask,
       contract: data.contract,
-      collectionId: data.contract,
+      collectionId,
       tokenId: data.tokenId,
+      orderId: data.orderId,
       fromAddress: data.maker,
       toAddress: null,
       price: data.price,
@@ -23,6 +34,7 @@ export class AskActivity {
       eventTimestamp: data.timestamp,
       metadata: {
         orderId: data.orderId,
+        orderSourceIdInt: data.orderSourceIdInt,
       },
     } as ActivitiesEntityInsertParams;
 
@@ -46,4 +58,5 @@ export type NewSellOrderEventData = {
   price: number;
   amount: number;
   timestamp: number;
+  orderSourceIdInt: number;
 };

@@ -5,11 +5,13 @@ import Joi from "joi";
 
 import { logger } from "@/common/logger";
 import { ApiKeyManager } from "../../../models/api-keys";
+import { config } from "@/config/index";
+import * as Boom from "@hapi/boom";
 
 export const postApiKey: RouteOptions = {
   description: "Generate API Key",
   notes:
-    "The optional API key can be used in every route, by setting it as a request header **x-api-key**.\n\n<a href='https://docs.reservoir.tools/reference/getting-started'>Learn more</a> about API Keys and Rate Limiting",
+    "The API key can be used in every route, by setting it as a request header **x-api-key**.\n\n<a href='https://docs.reservoir.tools/reference/getting-started'>Learn more</a> about API Keys and Rate Limiting",
   tags: ["api", "Management"],
   plugins: {
     "hapi-swagger": {
@@ -18,6 +20,9 @@ export const postApiKey: RouteOptions = {
     },
   },
   validate: {
+    headers: Joi.object({
+      "x-admin-api-key": Joi.string().required(),
+    }).options({ allowUnknown: true }),
     payload: Joi.object({
       appName: Joi.string().required().description("The name of your app"),
       email: Joi.string()
@@ -26,7 +31,7 @@ export const postApiKey: RouteOptions = {
         .description(
           "An e-mail address where you can be reached, in case of issues, to avoid service disruption"
         ),
-      website: Joi.string().uri().required().description("The website of your project"),
+      website: Joi.string().required().description("The website of your project"),
     }),
   },
   response: {
@@ -39,6 +44,10 @@ export const postApiKey: RouteOptions = {
     },
   },
   handler: async (request: Request) => {
+    if (request.headers["x-admin-api-key"] !== config.adminApiKey) {
+      throw Boom.unauthorized("Wrong or missing admin API key");
+    }
+
     const payload = request.payload as any;
 
     try {
@@ -48,6 +57,7 @@ export const postApiKey: RouteOptions = {
         app_name: payload.appName,
         website: payload.website,
         email: payload.email,
+        tier: 1,
       });
 
       if (!key) {

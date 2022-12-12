@@ -16,7 +16,7 @@ export const queue = new Queue(QUEUE_NAME, {
       type: "exponential",
       delay: 20000,
     },
-    removeOnComplete: 10000,
+    removeOnComplete: 1000,
     removeOnFail: 10000,
     timeout: 60000,
   },
@@ -49,7 +49,7 @@ if (config.doBackgroundWork) {
           return;
         }
 
-        await idb.none(
+        const collectionFloorAskChanged = await idb.oneOrNone(
           `
             WITH y AS (
               UPDATE collections SET
@@ -60,18 +60,30 @@ if (config.doBackgroundWork) {
                 floor_sell_valid_between = x.valid_between,
                 updated_at = now()
               FROM (
+                WITH collection_floor_sell AS (
+                    SELECT
+                      tokens.floor_sell_id,
+                      tokens.floor_sell_value,
+                      tokens.floor_sell_maker,
+                      orders.source_id_int,
+                      orders.valid_between
+                    FROM tokens
+                    JOIN orders
+                      ON tokens.floor_sell_id = orders.id
+                    WHERE tokens.collection_id = $/collection/
+                    ORDER BY tokens.floor_sell_value
+                    LIMIT 1
+                )
                 SELECT
-                  tokens.floor_sell_id,
-                  tokens.floor_sell_value,
-                  tokens.floor_sell_maker,
-                  orders.source_id_int,
-                  orders.valid_between
-                FROM tokens
-                JOIN orders
-                  ON tokens.floor_sell_id = orders.id
-                WHERE tokens.collection_id = $/collection/
-                ORDER BY tokens.floor_sell_value
-                LIMIT 1
+                    collection_floor_sell.floor_sell_id,
+                    collection_floor_sell.floor_sell_value,
+                    collection_floor_sell.floor_sell_maker,
+                    collection_floor_sell.source_id_int,
+                    collection_floor_sell.valid_between
+                FROM collection_floor_sell
+                UNION ALL
+                SELECT NULL, NULL, NULL, NULL, NULL
+                WHERE NOT EXISTS (SELECT 1 FROM collection_floor_sell)
               ) x
               WHERE collections.id = $/collection/
                 AND (
@@ -119,7 +131,7 @@ if (config.doBackgroundWork) {
               $/txHash/,
               $/txTimestamp/
             FROM y
-            JOIN LATERAL (
+            LEFT JOIN LATERAL (
               SELECT
                 token_sets_tokens.contract,
                 token_sets_tokens.token_id
@@ -129,6 +141,7 @@ if (config.doBackgroundWork) {
               WHERE orders.id = y.floor_sell_id
               LIMIT 1
             ) z ON TRUE
+            RETURNING 1
           `,
           {
             kind,
@@ -139,6 +152,10 @@ if (config.doBackgroundWork) {
             txTimestamp,
           }
         );
+
+        if (collectionFloorAskChanged) {
+          await redis.del(`collection-floor-ask:${collectionResult.collection_id}`);
+        }
       } catch (error) {
         logger.error(
           QUEUE_NAME,

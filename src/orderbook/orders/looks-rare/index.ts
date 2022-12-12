@@ -8,11 +8,13 @@ import { bn, now, toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import * as arweaveRelay from "@/jobs/arweave-relay";
 import * as ordersUpdateById from "@/jobs/order-updates/by-id-queue";
+import { Sources } from "@/models/sources";
 import { DbOrder, OrderMetadata, generateSchemaHash } from "@/orderbook/orders/utils";
 import { offChainCheck } from "@/orderbook/orders/looks-rare/check";
 import * as commonHelpers from "@/orderbook/orders/common/helpers";
 import * as tokenSet from "@/orderbook/token-sets";
-import { Sources } from "@/models/sources";
+import * as royalties from "@/utils/royalties";
+import { Royalty } from "@/utils/royalties";
 
 export type OrderInfo = {
   orderParams: Sdk.LooksRare.Types.MakerOrderParams;
@@ -178,25 +180,68 @@ export const save = async (
         {
           kind: "marketplace",
           recipient: "0x5924a28caaf1cc016617874a2f0c3710d881f3c1",
-          bps: 200,
+          bps: 150,
         },
       ];
 
       // Handle: royalties
-      const royalties = await commonHelpers.getRoyalties(order.params.collection);
-      feeBreakdown = [
-        ...feeBreakdown,
-        ...royalties.map(({ bps, recipient }) => ({
-          kind: "royalty",
+      let eip2981Royalties: Royalty[];
+
+      if (order.params.kind === "single-token") {
+        eip2981Royalties = await royalties.getRoyalties(
+          order.params.collection,
+          order.params.tokenId,
+          "eip2981"
+        );
+      } else {
+        eip2981Royalties = await royalties.getRoyaltiesByTokenSet(tokenSetId, "eip2981");
+      }
+
+      if (eip2981Royalties.length) {
+        feeBreakdown = [
+          ...feeBreakdown,
+          {
+            kind: "royalty",
+            recipient: eip2981Royalties[0].recipient,
+            // LooksRare has fixed 0.5% royalties
+            bps: 50,
+          },
+        ];
+      }
+
+      const price = order.params.price;
+
+      // Handle: royalties on top
+      const defaultRoyalties =
+        side === "sell"
+          ? await royalties.getRoyalties(order.params.collection, order.params.tokenId, "default")
+          : await royalties.getRoyaltiesByTokenSet(tokenSetId, "default");
+
+      const missingRoyalties = [];
+      let missingRoyaltyAmount = bn(0);
+      for (const { bps, recipient } of defaultRoyalties) {
+        // Get any built-in royalty payment to the current recipient
+        const existingRoyalty = feeBreakdown.find(
+          (r) => r.kind === "royalty" && r.recipient === recipient
+        );
+
+        // Deduce the 0.5% royalty LooksRare will pay if needed
+        const actualBps = existingRoyalty ? bps - 50 : bps;
+        const amount = bn(price).mul(actualBps).div(10000).toString();
+        missingRoyaltyAmount = missingRoyaltyAmount.add(amount);
+
+        missingRoyalties.push({
+          bps: actualBps,
+          amount,
           recipient,
-          bps,
-        })),
-      ];
+        });
+      }
+
       const feeBps = feeBreakdown.map(({ bps }) => bps).reduce((a, b) => Number(a) + Number(b), 0);
 
       // Handle: price and value
-      const price = order.params.price;
       let value: string;
+      let normalizedValue: string | undefined;
       if (side === "buy") {
         // For buy orders, we set the value as `price - fee` since it
         // is best for UX to show the user exactly what they're going
@@ -204,9 +249,13 @@ export const save = async (
         value = bn(price)
           .sub(bn(price).mul(bn(feeBps)).div(10000))
           .toString();
+        // The normalized value excludes the royalties from the value
+        normalizedValue = bn(value).sub(missingRoyaltyAmount).toString();
       } else {
         // For sell orders, the value is the same as the price
         value = price;
+        // The normalized value includes the royalties on top of the price
+        normalizedValue = bn(value).add(missingRoyaltyAmount).toString();
       }
 
       // Handle: source
@@ -258,6 +307,9 @@ export const save = async (
         dynamic: null,
         raw_data: order.params,
         expiration: validTo,
+        missing_royalties: missingRoyalties,
+        normalized_value: normalizedValue,
+        currency_normalized_value: normalizedValue,
       });
 
       const unfillable =
@@ -313,6 +365,9 @@ export const save = async (
         "dynamic",
         "raw_data",
         { name: "expiration", mod: ":raw" },
+        { name: "missing_royalties", mod: ":json" },
+        "normalized_value",
+        "currency_normalized_value",
       ],
       {
         table: "orders",

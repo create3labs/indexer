@@ -18,6 +18,7 @@ export type ActivitiesEntityInsertParams = {
   contract: string;
   collectionId: string;
   tokenId: string | null;
+  orderId: string | null;
   fromAddress: string;
   toAddress: string | null;
   price: number;
@@ -35,6 +36,7 @@ export type ActivitiesEntityParams = {
   contract: Buffer;
   collection_id: string;
   token_id: string | null;
+  order_id: string | null;
   from_address: Buffer;
   to_address: Buffer | null;
   price: number;
@@ -47,6 +49,11 @@ export type ActivitiesEntityParams = {
   token_image: string;
   collection_name: string;
   collection_metadata: CollectionsMetadata;
+  order_side: string;
+  order_source_id_int: number;
+  order_kind: string;
+  order_metadata: Record<string, unknown>;
+  order_criteria: Record<string, unknown>;
 };
 
 // Possible fields to be found in the metadata
@@ -55,6 +62,11 @@ export type ActivityMetadata = {
   logIndex?: number;
   batchIndex?: number;
   orderId?: string;
+  orderSide?: string;
+  orderSourceIdInt?: number;
+  orderKind?: string;
+  orderMetadata?: Record<string, unknown>;
+  orderCriteria?: Record<string, unknown>;
 };
 
 export type ActivityToken = {
@@ -69,6 +81,15 @@ export type ActivityCollection = {
   collectionImage?: string;
 };
 
+export type ActivityOrder = {
+  id: string | null;
+  side: string | null;
+  sourceIdInt: number | null;
+  kind: string | null;
+  metadata: Record<string, unknown> | null;
+  criteria: Record<string, unknown> | null;
+};
+
 export class ActivitiesEntity {
   id: number;
   hash: string;
@@ -76,6 +97,7 @@ export class ActivitiesEntity {
   contract: string;
   collectionId: string;
   tokenId: string | null;
+  orderId: string | null;
   fromAddress: string;
   toAddress: string | null;
   price: number;
@@ -86,6 +108,7 @@ export class ActivitiesEntity {
   metadata: ActivityMetadata;
   token?: ActivityToken;
   collection?: ActivityCollection;
+  order?: ActivityOrder;
 
   constructor(params: ActivitiesEntityParams) {
     this.id = params.id;
@@ -94,6 +117,7 @@ export class ActivitiesEntity {
     this.contract = fromBuffer(params.contract);
     this.collectionId = params.collection_id;
     this.tokenId = params.token_id;
+    this.orderId = params.order_id;
     this.fromAddress = fromBuffer(params.from_address);
     this.toAddress = params.to_address ? fromBuffer(params.to_address) : null;
     this.price = params.price;
@@ -111,6 +135,14 @@ export class ActivitiesEntity {
       collectionId: params.collection_id,
       collectionImage: params.collection_metadata?.imageUrl,
       collectionName: params.collection_name,
+    };
+    this.order = {
+      id: params.order_id,
+      side: params.order_side,
+      sourceIdInt: params.order_source_id_int,
+      kind: params.order_kind,
+      metadata: params.order_metadata,
+      criteria: params.order_criteria,
     };
   }
 }

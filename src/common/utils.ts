@@ -1,5 +1,8 @@
 import { BigNumber, BigNumberish } from "@ethersproject/bignumber";
 import { formatEther, formatUnits } from "@ethersproject/units";
+import crypto from "crypto";
+
+import { config } from "@/config/index";
 
 // --- BigNumbers ---
 
@@ -11,11 +14,30 @@ export const formatEth = (value: BigNumberish) => Number(Number(formatEther(valu
 
 export const formatUsd = (value: BigNumberish) => Number(Number(formatUnits(value, 6)).toFixed(5));
 
-export const formatPrice = (value: BigNumberish, decimals = 18) =>
-  Number(Number(formatUnits(value, decimals)).toFixed(5));
+export const formatPrice = (value: BigNumberish, decimals = 18, roundDown = false) =>
+  roundDown
+    ? Math.floor(Number(Number(formatUnits(value, decimals)).toFixed(6)) * 100000) / 100000
+    : Number(Number(formatUnits(value, decimals)).toFixed(5));
 
 export const getNetAmount = (value: BigNumberish, bps: number) =>
   bn(value).sub(bn(value).mul(bps).div(10000)).toString();
+
+// --- Encrypt / Decrypt ---
+
+export const encrypt = (text: string) => {
+  const cipher = crypto.createCipheriv("aes-256-ecb", config.cipherSecret, null);
+  const encryptedText = Buffer.concat([cipher.update(text), cipher.final()]);
+  return encryptedText.toString("hex");
+};
+
+export const decrypt = (text: string) => {
+  const decipher = crypto.createDecipheriv("aes-256-ecb", config.cipherSecret, null);
+  const decryptedAsset = Buffer.concat([
+    decipher.update(Buffer.from(text, "hex")),
+    decipher.final(),
+  ]);
+  return decryptedAsset.toString();
+};
 
 // --- Buffers ---
 
@@ -26,6 +48,18 @@ export const toBuffer = (hexValue: string) => Buffer.from(hexValue.slice(2), "he
 // --- Time ---
 
 export const now = () => Math.floor(Date.now() / 1000);
+
+export const toTime = (dateString: string) => Math.floor(new Date(dateString).getTime() / 1000);
+
+// --- Misc ---
+
+export const concat = <T>(...items: (T[] | undefined)[]) => {
+  let result: T[] = [];
+  for (const item of items) {
+    result = [...result, ...(item ?? [])];
+  }
+  return result;
+};
 
 // --- Continuations ---
 
@@ -53,7 +87,7 @@ export const buildContinuation = (c: string) => Buffer.from(c).toString("base64"
 
 export const regex = {
   base64: /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
-  domain: /^[a-zA-Z0-9][a-zA-Z0-9.-]+[a-zA-Z0-9]$/,
+  domain: /^[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}$|localhost/,
   address: /^0x[a-fA-F0-9]{40}$/,
   bytes32: /^0x[a-fA-F0-9]{64}$/,
   token: /^0x[a-fA-F0-9]{40}:[0-9]+$/,
