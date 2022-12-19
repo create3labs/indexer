@@ -4,6 +4,8 @@ import { encrypt } from "@/common/utils";
 
 export class Assets {
   public static getLocalAssetsLink(assets: string | string[]) {
+    return assets;
+
     if (_.isEmpty(assets) || assets == "") {
       return undefined;
     }

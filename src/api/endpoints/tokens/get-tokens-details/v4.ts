@@ -26,7 +26,7 @@ export const getTokensDetailsV4Options: RouteOptions = {
   tags: ["api", "x-deprecated"],
   plugins: {
     "hapi-swagger": {
-      deprecated: true,
+      deprecated: false,
     },
   },
   validate: {

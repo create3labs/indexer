@@ -823,6 +823,7 @@ if (config.doBackgroundWork) {
         if (url?.startsWith(JSON_BASE64_PREFIX)) {
           const base64Data = url.replace(JSON_BASE64_PREFIX, "");
           const decoded = JSON.parse(new Buffer(base64Data, "base64").toString("utf-8"));
+
           metadatas.push({
             ...mapMetadata(decoded),
             ...refreshToken,
@@ -839,8 +840,6 @@ if (config.doBackgroundWork) {
                 ...refreshToken,
               });
             } catch (e) {
-              // eslint-disable-next-line no-console
-              console.log(e);
               return retry(e);
             }
           });

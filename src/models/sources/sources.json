@@ -78,6 +78,7 @@
   },
   "100": {
     "domain": "zencon-marketplace.netlify.app",
+    "domainHash": "blabla",
     "name": "ZenCon Marketplace",
     "address": "0xCDb0839bbfd718b38d4F3fa9a5b2570162B5A6DE",
     "data": {

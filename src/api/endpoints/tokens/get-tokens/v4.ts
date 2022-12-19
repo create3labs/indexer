@@ -413,6 +413,7 @@ export const getTokensV4Options: RouteOptions = {
       }
 
       const sources = await Sources.getInstance();
+
       const result = rawResult.map((r) => {
         return {
           contract: fromBuffer(r.contract),
