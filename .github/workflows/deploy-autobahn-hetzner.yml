@@ -1,0 +1,109 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - v5-deploy-autobahn
+
+env:
+  REMOTE_HOME: "/home/c3labs"
+  REMOTE_REPO_BASE_DIR: "/home/c3labs/indexer"
+  HARD_REBOOT: "true"
+
+jobs:
+  prepare-provisioning:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # This is used to complete the identity challenge
+      # with sigstore/fulcio when running outside of PRs.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Fetch Server Info
+        uses: 3bit/setup-hcloud@v1
+        id: fetch-server-info
+      - run: |
+          hcloud server list -o noheader -o columns=IPV4 -l type=indexer | xargs | xargs -I '{}' sh -c 'echo ${1} > indexer_ip4_list.txt' - {}
+        shell: /usr/bin/bash -ex {0}
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      - name: Upload ip4-lists files
+        uses: actions/upload-artifact@v3
+        with:
+          name: ip4-lists
+          path: ./*_list.txt
+
+      - name: Create env file
+        run: |
+          touch env-file
+          echo "VERSION=v5" >>  env-file
+          echo "PORT=80" >>  env-file
+          echo "CHAIN_ID=${{ secrets.AUTOBAHN_CHAIN_ID }}" >>  env-file
+          # todo / extract to  env-file
+          echo "ADMIN_API_KEY=${{ secrets.AUTOBAHN_ADMIN_API_KEY }}" >>  env-file
+          echo "BASE_NETWORK_HTTP_URL=${{ secrets.AUTOBAHN_RPC }}" >>  env-file
+          echo "BASE_NETWORK_WS_URL=${{ secrets.AUTOBAHN_RPC_WS }}" >>  env-file
+          echo "DATABASE_URL=postgresql://postgres:password@postgres:5432/postgres?schema=public" >>  env-file
+          echo "REDIS_URL=redis://redis:password@redis:6379" >>  env-file
+          echo "CATCHUP=1" >>  env-file
+          echo "MASTER=1" >>  env-file
+          echo "DO_BACKGROUND_WORK=1" >>  env-file
+          echo "DO_EVENTS_SYNC_BACKFILL=1" >>  env-file
+          echo "DISABLE_ORDERS=0" >>  env-file
+          echo "METADATA_INDEXING_METHOD=contract" >>  env-file
+          echo "WRAPPED_NATIVE=${{ secrets.AUTOBAHN_WRAPPED_NATIVE }}" >>  env-file
+          echo "USDC=${{ secrets.AUTOBAHN_USDC }}" >>  env-file
+          echo "ROUTER=${{ secrets.AUTOBAHN_ROUTER }}" >>  env-file
+          echo "SEAPORT_EXCHANGE=0x00000000006c3852cbEf3e08E8dF289169EdE581" >>  env-file
+          echo "SEAPORT_CONDUIT_CONTROLLER=0x00000000F9490004C11Cef243f5400493c00Ad63" >>  env-file
+          echo "METADATA_API_BASE_URL=x" >>  env-file
+          echo "WL_ADDRESS=" >>  env-file
+      - name: Upload env file
+        uses: actions/upload-artifact@v3
+        with:
+          name: env-file
+          path: ./env-file
+
+  start-provisioning:
+    needs:
+      - prepare-provisioning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # This is used to complete the identity challenge
+      # with sigstore/fulcio when running outside of PRs.
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download iplist from prepare provisioning
+        uses: actions/download-artifact@v3
+        with:
+          name: ip4-lists
+
+      - name: Download env-file from prepare provisioning
+        uses: actions/download-artifact@v3
+        with:
+          name: env-file
+
+      - name: start servers
+        uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.CREATE3LABS_COM_SSH_PRIVATE_KEY }}
+      - run: |
+          if [ -f "./indexer_ip4_list.txt" ]; then
+            IPV4_LIST=`cat ./indexer_ip4_list.txt`;
+          fi
+          if [ ! -z "${IPV4_LIST}" ]; then
+            ${{ github.workspace }}/scripts/add_ips_to_known_hosts.sh "${IPV4_LIST}";
+            ${{ github.workspace }}/scripts/copy_sources.sh "${IPV4_LIST}";
+            ${{ github.workspace }}/scripts/start_indexer.sh "${IPV4_LIST}" "${HARD_REBOOT}";
+          fi
+          # reset for next use
+          unset IPV4_LIST;
