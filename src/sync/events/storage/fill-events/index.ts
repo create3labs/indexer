@@ -3,25 +3,26 @@ import { OrderKind } from "@/orderbook/orders";
 
 export * from "@/events-sync/storage/fill-events/common";
 export * from "@/events-sync/storage/fill-events/partial";
-export * from "@/events-sync/storage/fill-events/foundation";
+export * from "@/events-sync/storage/fill-events/on-chain";
 
 export type Event = {
   orderKind: OrderKind;
   orderId?: string;
   orderSide: "buy" | "sell";
-  orderSourceIdInt?: number;
   maker: string;
   taker: string;
   price: string;
   contract: string;
   tokenId: string;
   amount: string;
+  orderSourceId?: number;
   aggregatorSourceId?: number;
   fillSourceId?: number;
   washTradingScore?: number;
   currency: string;
   currencyPrice?: string;
   usdPrice?: string;
+  isPrimary?: boolean;
   baseEventParams: BaseEventParams;
 };
 
@@ -50,4 +51,5 @@ export type DbEvent = {
   currency: Buffer;
   currency_price: string | null;
   usd_price: string | null;
+  is_primary: boolean | null;
 };

@@ -22,7 +22,7 @@ export const getRedirectLogoV2Options: RouteOptions = {
   },
   validate: {
     params: Joi.object({
-      source: Joi.string().required().description("Name of the order source. Example `opensea.io`"),
+      source: Joi.string().required().description("Domain of the source. Example `opensea.io`"),
     }),
   },
   handler: async (request: Request, response) => {
@@ -35,11 +35,7 @@ export const getRedirectLogoV2Options: RouteOptions = {
         source = sources.getByDomain(params.source);
       }
 
-      if (source.metadata.adminIcon) {
-        return response.redirect(source.metadata.adminIcon);
-      }
-
-      return response.redirect(source.metadata.icon);
+      return response.redirect(source?.getIcon()).header("cache-control", `${1000 * 60}`);
     } catch (error) {
       logger.error(`get-redirect-logo-${version}-handler`, `Handler failure: ${error}`);
       throw error;

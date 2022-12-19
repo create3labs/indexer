@@ -27,7 +27,16 @@ export const postOrdersV1Options: RouteOptions = {
         Joi.object({
           kind: Joi.string()
             .lowercase()
-            .valid("looks-rare", "721ex", "zeroex-v4", "x2y2", "seaport")
+            .valid(
+              "looks-rare",
+              "zeroex-v4",
+              "x2y2",
+              "seaport",
+              "element",
+              "blur",
+              "rarible",
+              "manifold"
+            )
             .required(),
           data: Joi.object().required(),
         })
@@ -56,16 +65,18 @@ export const postOrdersV1Options: RouteOptions = {
       const orderInfos: orderbookOrders.GenericOrderInfo[] = [];
       for (const { kind, data } of orders) {
         orderInfos.push({
-          kind: kind === "721ex" ? "opendao" : kind,
+          kind,
           info: {
+            kind: "full",
             orderParams: data,
             metadata: {},
           },
           relayToArweave: true,
+          validateBidValue: true,
         });
       }
 
-      await orderbookOrders.addToQueue(orderInfos, true);
+      await orderbookOrders.addToQueue(orderInfos);
 
       return { message: "Request accepted" };
     } catch (error) {

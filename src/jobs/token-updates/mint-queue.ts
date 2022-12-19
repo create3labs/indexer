@@ -22,7 +22,7 @@ export const queue = new Queue(QUEUE_NAME, {
       type: "exponential",
       delay: 20000,
     },
-    removeOnComplete: 10000,
+    removeOnComplete: 1000,
     removeOnFail: 10000,
     timeout: 60000,
   },
@@ -41,11 +41,13 @@ if (config.doBackgroundWork) {
         const collection: {
           id: string;
           token_set_id: string | null;
+          community: string | null;
         } | null = await idb.oneOrNone(
           `
             SELECT
               "c"."id",
-              "c"."token_set_id"
+              "c"."token_set_id",
+              "c"."community"
             FROM "collections" "c"
             WHERE "c"."contract" = $/contract/
               AND "c"."token_id_range" @> $/tokenId/::NUMERIC(78, 0)
@@ -122,7 +124,7 @@ if (config.doBackgroundWork) {
                 {
                   kind: "single-token",
                   data: {
-                    method: config.metadataIndexingMethod,
+                    method: metadataIndexFetch.getIndexingMethod(collection.community),
                     contract,
                     tokenId,
                     collection: collection.id,
@@ -134,7 +136,7 @@ if (config.doBackgroundWork) {
             );
           }
         } else {
-          // we fetch the collection metadata from upstream
+          // We fetch the collection metadata from upstream
           await fetchCollectionMetadata.addToQueue([
             {
               contract,
@@ -144,7 +146,7 @@ if (config.doBackgroundWork) {
           ]);
         }
 
-        // Set any cached information (eg. floor sell, top buy)
+        // Set any cached information (eg. floor sell)
         await tokenRefreshCache.addToQueue(contract, tokenId);
       } catch (error) {
         logger.error(

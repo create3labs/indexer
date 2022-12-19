@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { AddressZero } from "@ethersproject/constants";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
 import * as Sdk from "@0xlol/sdk";
@@ -16,11 +17,6 @@ import { config } from "@/config/index";
 import * as looksRareBuyToken from "@/orderbook/orders/looks-rare/build/buy/token";
 import * as looksRareBuyCollection from "@/orderbook/orders/looks-rare/build/buy/collection";
 
-// OpenDao
-import * as openDaoBuyAttribute from "@/orderbook/orders/opendao/build/buy/attribute";
-import * as openDaoBuyToken from "@/orderbook/orders/opendao/build/buy/token";
-import * as openDaoBuyCollection from "@/orderbook/orders/opendao/build/buy/collection";
-
 // Seaport
 import * as seaportBuyAttribute from "@/orderbook/orders/seaport/build/buy/attribute";
 import * as seaportBuyToken from "@/orderbook/orders/seaport/build/buy/token";
@@ -34,6 +30,14 @@ import * as x2y2BuyToken from "@/orderbook/orders/x2y2/build/buy/token";
 import * as zeroExV4BuyAttribute from "@/orderbook/orders/zeroex-v4/build/buy/attribute";
 import * as zeroExV4BuyToken from "@/orderbook/orders/zeroex-v4/build/buy/token";
 import * as zeroExV4BuyCollection from "@/orderbook/orders/zeroex-v4/build/buy/collection";
+
+// Universe
+import * as universeBuyToken from "@/orderbook/orders/universe/build/buy/token";
+
+// Forward
+import * as forwardBuyAttribute from "@/orderbook/orders/forward/build/buy/attribute";
+import * as forwardBuyToken from "@/orderbook/orders/forward/build/buy/token";
+import * as forwardBuyCollection from "@/orderbook/orders/forward/build/buy/collection";
 
 const version = "v4";
 
@@ -59,7 +63,9 @@ export const getExecuteBidV4Options: RouteOptions = {
       source: Joi.string()
         .lowercase()
         .pattern(regex.domain)
-        .description("Domain of the platform that created the order. Example: `chimpers.xyz`"),
+        .description(
+          `Domain of your app that is creating the order, e.g. \`myapp.xyz\`. This is used for filtering, and to attribute the "order source" of sales in on-chain analytics, to help your app get discovered. Lean more <a href='https://docs.reservoir.tools/docs/calldata-attribution'>here</a>`
+        ),
       params: Joi.array().items(
         Joi.object({
           token: Joi.string()
@@ -81,20 +87,21 @@ export const getExecuteBidV4Options: RouteOptions = {
             "Bid on a particular attribute value. Example: `Teddy (#33)`"
           ),
           quantity: Joi.number().description(
-            "Quanity of tokens user is buying. Only compatible with ERC1155 tokens. Example: `5`"
+            "Quantity of tokens user is buying. Only compatible with ERC1155 tokens. Example: `5`"
           ),
           weiPrice: Joi.string()
             .pattern(regex.number)
             .description("Amount bidder is willing to offer in wei. Example: `1000000000000000000`")
             .required(),
           orderKind: Joi.string()
-            .valid("721ex", "zeroex-v4", "seaport", "looks-rare", "x2y2")
+            .valid("zeroex-v4", "seaport", "looks-rare", "x2y2", "universe", "forward")
             .default("seaport")
             .description("Exchange protocol used to create order. Example: `seaport`"),
           orderbook: Joi.string()
-            .valid("reservoir", "opensea", "looks-rare", "x2y2")
+            .valid("reservoir", "opensea", "looks-rare", "x2y2", "universe")
             .default("reservoir")
             .description("Orderbook where order is placed. Example: `Reservoir`"),
+          orderbookApiKey: Joi.string().description("Optional API key for the target orderbook"),
           automatedRoyalties: Joi.boolean()
             .default(true)
             .description("If true, royalties will be automatically included."),
@@ -120,6 +127,9 @@ export const getExecuteBidV4Options: RouteOptions = {
             .pattern(regex.number)
             .description("Optional. Random string to make the order unique"),
           nonce: Joi.string().pattern(regex.number).description("Optional. Set a custom nonce"),
+          currency: Joi.string()
+            .pattern(regex.address)
+            .default(Sdk.Common.Addresses.Weth[config.chainId]),
         })
           .or("token", "collection", "tokenSetId")
           .oxor("token", "collection", "tokenSetId")
@@ -133,6 +143,7 @@ export const getExecuteBidV4Options: RouteOptions = {
     schema: Joi.object({
       steps: Joi.array().items(
         Joi.object({
+          id: Joi.string().required(),
           kind: Joi.string().valid("request", "signature", "transaction").required(),
           action: Joi.string().required(),
           description: Joi.string().required(),
@@ -163,6 +174,7 @@ export const getExecuteBidV4Options: RouteOptions = {
 
       // Set up generic bid steps
       const steps: {
+        id: string;
         action: string;
         description: string;
         kind: string;
@@ -173,18 +185,29 @@ export const getExecuteBidV4Options: RouteOptions = {
         }[];
       }[] = [
         {
+          id: "wallet-initialization",
+          action: "Initialize wallet",
+          description: "One-time initialization of wallet",
+          kind: "transaction",
+          items: [],
+        },
+        {
+          id: "weth-wrapping",
           action: "Wrapping ETH",
-          description: "Wrapping ETH required to make offer",
+          description: "We'll ask your approval for converting ETH to WETH. Gas fee required.",
           kind: "transaction",
           items: [],
         },
         {
+          id: "currency-approval",
           action: "Approve WETH contract",
-          description: "A one-time setup transaction to enable trading with WETH",
+          description:
+            "We'll ask your approval for the exchange to access your token. This is a one-time only operation per exchange.",
           kind: "transaction",
           items: [],
         },
         {
+          id: "order-signature",
           action: "Authorize offer",
           description: "A free off-chain signature to create the offer",
           kind: "signature",
@@ -201,9 +224,13 @@ export const getExecuteBidV4Options: RouteOptions = {
         const attributeKey = params.attributeKey;
         const attributeValue = params.attributeValue;
 
-        // On Rinkeby, proxy ZeroEx V4 to 721ex
-        if (params.orderKind === "zeroex-v4" && config.chainId === 4) {
-          params.orderKind = "721ex";
+        if (!token) {
+          // TODO: Re-enable collection/attribute bids on external orderbooks
+          if (!["reservoir", "opensea"].includes(params.orderbook)) {
+            throw Boom.badRequest("Only single-token bids are supported on external orderbooks");
+          } else if (params.orderbook === "opensea" && attributeKey && attributeValue) {
+            throw Boom.badRequest("Attribute bids are not supported on `opensea` orderbook");
+          }
         }
 
         // Handle fees
@@ -217,16 +244,21 @@ export const getExecuteBidV4Options: RouteOptions = {
           params.feeRecipient.push(feeRecipient);
         }
 
-        // Check the maker's Weth/Eth balance
+        // Check the maker's balance
         let wrapEthTx: TxData | undefined;
-        const weth = new Sdk.Common.Helpers.Weth(baseProvider, config.chainId);
-        const wethBalance = await weth.getBalance(maker);
-        if (bn(wethBalance).lt(params.weiPrice)) {
-          const ethBalance = await baseProvider.getBalance(maker);
-          if (bn(wethBalance).add(ethBalance).lt(params.weiPrice)) {
-            throw Boom.badData("Maker does not have sufficient balance");
+        const currency = new Sdk.Common.Helpers.Erc20(baseProvider, params.currency);
+        const currencyBalance = await currency.getBalance(maker);
+        if (bn(currencyBalance).lt(params.weiPrice)) {
+          if (params.currency === Sdk.Common.Addresses.Weth[config.chainId]) {
+            const ethBalance = await baseProvider.getBalance(maker);
+            if (bn(currencyBalance).add(ethBalance).lt(params.weiPrice)) {
+              throw Boom.badData("Maker does not have sufficient balance");
+            } else {
+              const weth = new Sdk.Common.Helpers.Weth(baseProvider, config.chainId);
+              wrapEthTx = weth.depositTransaction(maker, bn(params.weiPrice).sub(currencyBalance));
+            }
           } else {
-            wrapEthTx = weth.depositTransaction(maker, bn(params.weiPrice).sub(wethBalance));
+            throw Boom.badData("Maker does not have sufficient balance");
           }
         }
 
@@ -270,24 +302,24 @@ export const getExecuteBidV4Options: RouteOptions = {
             const exchange = new Sdk.Seaport.Exchange(config.chainId);
             const conduit = exchange.deriveConduit(order.params.conduitKey);
 
-            // Check the maker's WETH approval
+            // Check the maker's approval
             let approvalTx: TxData | undefined;
-            const wethApproval = await weth.getAllowance(maker, conduit);
-            if (bn(wethApproval).lt(order.getMatchingPrice())) {
-              approvalTx = weth.approveTransaction(maker, conduit);
+            const currencyApproval = await currency.getAllowance(maker, conduit);
+            if (bn(currencyApproval).lt(order.getMatchingPrice())) {
+              approvalTx = currency.approveTransaction(maker, conduit);
             }
 
-            steps[0].items.push({
+            steps[1].items.push({
               status: !wrapEthTx ? "complete" : "incomplete",
               data: wrapEthTx,
               orderIndex: i,
             });
-            steps[1].items.push({
+            steps[2].items.push({
               status: !approvalTx ? "complete" : "incomplete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[3].items.push({
               status: "incomplete",
               data: {
                 sign: order.getSignatureData(),
@@ -311,112 +343,10 @@ export const getExecuteBidV4Options: RouteOptions = {
                           }
                         : undefined,
                     collection:
-                      collection && params.excludeFlaggedTokens && !attributeKey && !attributeValue
-                        ? collection
-                        : undefined,
+                      collection && !attributeKey && !attributeValue ? collection : undefined,
                     isNonFlagged: params.excludeFlaggedTokens,
                     orderbook: params.orderbook,
-                    source,
-                  },
-                },
-              },
-              orderIndex: i,
-            });
-
-            // Go on with the next bid
-            continue;
-          }
-
-          case "721ex": {
-            if (!["reservoir"].includes(params.orderbook)) {
-              throw Boom.badRequest("Only `reservoir` is supported as orderbook");
-            }
-
-            let order: Sdk.OpenDao.Order | undefined;
-            if (token) {
-              const [contract, tokenId] = token.split(":");
-              order = await openDaoBuyToken.build({
-                ...params,
-                maker,
-                contract,
-                tokenId,
-              });
-            } else if (tokenSetId || (collection && attributeKey && attributeValue)) {
-              order = await openDaoBuyAttribute.build({
-                ...params,
-                maker,
-                collection,
-                attributes: [
-                  {
-                    key: attributeKey,
-                    value: attributeValue,
-                  },
-                ],
-              });
-            } else if (collection) {
-              order = await openDaoBuyCollection.build({
-                ...params,
-                maker,
-                collection,
-              });
-            }
-
-            if (!order) {
-              throw Boom.internal("Failed to generate order");
-            }
-
-            // Check the maker's approval
-            let approvalTx: TxData | undefined;
-            const wethApproval = await weth.getAllowance(
-              maker,
-              Sdk.OpenDao.Addresses.Exchange[config.chainId]
-            );
-            if (bn(wethApproval).lt(bn(order.params.erc20TokenAmount).add(order.getFeeAmount()))) {
-              approvalTx = weth.approveTransaction(
-                maker,
-                Sdk.OpenDao.Addresses.Exchange[config.chainId]
-              );
-            }
-
-            steps[0].items.push({
-              status: !wrapEthTx ? "complete" : "incomplete",
-              data: wrapEthTx,
-              orderIndex: i,
-            });
-            steps[1].items.push({
-              status: !approvalTx ? "complete" : "incomplete",
-              data: approvalTx,
-              orderIndex: i,
-            });
-            steps[2].items.push({
-              status: "incomplete",
-              data: {
-                sign: order.getSignatureData(),
-                post: {
-                  endpoint: "/order/v3",
-                  method: "POST",
-                  body: {
-                    order: {
-                      kind: "721ex",
-                      data: {
-                        ...order.params,
-                      },
-                    },
-                    tokenSetId,
-                    attribute:
-                      collection && attributeKey && attributeValue
-                        ? {
-                            collection,
-                            key: attributeKey,
-                            value: attributeValue,
-                          }
-                        : undefined,
-                    collection:
-                      collection && params.excludeFlaggedTokens && !attributeKey && !attributeValue
-                        ? collection
-                        : undefined,
-                    isNonFlagged: params.excludeFlaggedTokens,
-                    orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
@@ -468,28 +398,28 @@ export const getExecuteBidV4Options: RouteOptions = {
 
             // Check the maker's approval
             let approvalTx: TxData | undefined;
-            const wethApproval = await weth.getAllowance(
+            const wethApproval = await currency.getAllowance(
               maker,
               Sdk.ZeroExV4.Addresses.Exchange[config.chainId]
             );
             if (bn(wethApproval).lt(bn(order.params.erc20TokenAmount).add(order.getFeeAmount()))) {
-              approvalTx = weth.approveTransaction(
+              approvalTx = currency.approveTransaction(
                 maker,
                 Sdk.ZeroExV4.Addresses.Exchange[config.chainId]
               );
             }
 
-            steps[0].items.push({
+            steps[1].items.push({
               status: !wrapEthTx ? "complete" : "incomplete",
               data: wrapEthTx,
               orderIndex: i,
             });
-            steps[1].items.push({
+            steps[2].items.push({
               status: !approvalTx ? "complete" : "incomplete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[3].items.push({
               status: "incomplete",
               data: {
                 sign: order.getSignatureData(),
@@ -513,11 +443,10 @@ export const getExecuteBidV4Options: RouteOptions = {
                           }
                         : undefined,
                     collection:
-                      collection && params.excludeFlaggedTokens && !attributeKey && !attributeValue
-                        ? collection
-                        : undefined,
+                      collection && !attributeKey && !attributeValue ? collection : undefined,
                     isNonFlagged: params.excludeFlaggedTokens,
                     orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
@@ -567,28 +496,28 @@ export const getExecuteBidV4Options: RouteOptions = {
 
             // Check the maker's approval
             let approvalTx: TxData | undefined;
-            const wethApproval = await weth.getAllowance(
+            const wethApproval = await currency.getAllowance(
               maker,
               Sdk.LooksRare.Addresses.Exchange[config.chainId]
             );
             if (bn(wethApproval).lt(bn(order.params.price))) {
-              approvalTx = weth.approveTransaction(
+              approvalTx = currency.approveTransaction(
                 maker,
                 Sdk.LooksRare.Addresses.Exchange[config.chainId]
               );
             }
 
-            steps[0].items.push({
+            steps[1].items.push({
               status: !wrapEthTx ? "complete" : "incomplete",
               data: wrapEthTx,
               orderIndex: i,
             });
-            steps[1].items.push({
+            steps[2].items.push({
               status: !approvalTx ? "complete" : "incomplete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[3].items.push({
               status: "incomplete",
               data: {
                 sign: order.getSignatureData(),
@@ -606,6 +535,7 @@ export const getExecuteBidV4Options: RouteOptions = {
                     collection:
                       collection && !attributeKey && !attributeValue ? collection : undefined,
                     orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
@@ -655,28 +585,28 @@ export const getExecuteBidV4Options: RouteOptions = {
 
             // Check the maker's approval
             let approvalTx: TxData | undefined;
-            const wethApproval = await weth.getAllowance(
+            const wethApproval = await currency.getAllowance(
               maker,
               Sdk.X2Y2.Addresses.Exchange[config.chainId]
             );
             if (bn(wethApproval).lt(bn(upstreamOrder.params.price))) {
-              approvalTx = weth.approveTransaction(
+              approvalTx = currency.approveTransaction(
                 maker,
                 Sdk.X2Y2.Addresses.Exchange[config.chainId]
               );
             }
 
-            steps[0].items.push({
+            steps[1].items.push({
               status: !wrapEthTx ? "complete" : "incomplete",
               data: wrapEthTx,
               orderIndex: i,
             });
-            steps[1].items.push({
+            steps[2].items.push({
               status: !approvalTx ? "complete" : "incomplete",
               data: approvalTx,
               orderIndex: i,
             });
-            steps[2].items.push({
+            steps[3].items.push({
               status: "incomplete",
               data: {
                 sign: new Sdk.X2Y2.Exchange(
@@ -697,6 +627,202 @@ export const getExecuteBidV4Options: RouteOptions = {
                     collection:
                       collection && !attributeKey && !attributeValue ? collection : undefined,
                     orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
+                    source,
+                  },
+                },
+              },
+              orderIndex: i,
+            });
+
+            // Go on with the next bid
+            continue;
+          }
+
+          case "universe": {
+            if (!["universe"].includes(params.orderbook)) {
+              throw Boom.badRequest("Only `universe` is supported as orderbook");
+            }
+
+            let order: Sdk.Universe.Order | undefined;
+            if (token) {
+              const [contract, tokenId] = token.split(":");
+              order = await universeBuyToken.build({
+                ...params,
+                maker,
+                contract,
+                tokenId,
+              });
+            }
+
+            if (!order) {
+              throw Boom.internal("Failed to generate order");
+            }
+
+            // Check the maker's approval
+            let approvalTx: TxData | undefined;
+            const wethApproval = await currency.getAllowance(
+              maker,
+              Sdk.Universe.Addresses.Exchange[config.chainId]
+            );
+            if (bn(wethApproval).lt(bn(order.params.make.value))) {
+              approvalTx = currency.approveTransaction(
+                maker,
+                Sdk.Universe.Addresses.Exchange[config.chainId]
+              );
+            }
+
+            steps[1].items.push({
+              status: !wrapEthTx ? "complete" : "incomplete",
+              data: wrapEthTx,
+              orderIndex: i,
+            });
+            steps[2].items.push({
+              status: !approvalTx ? "complete" : "incomplete",
+              data: approvalTx,
+              orderIndex: i,
+            });
+            steps[3].items.push({
+              status: "incomplete",
+              data: {
+                sign: order.getSignatureData(),
+                post: {
+                  endpoint: "/order/v3",
+                  method: "POST",
+                  body: {
+                    order: {
+                      kind: "universe",
+                      data: {
+                        ...order.params,
+                      },
+                    },
+                    tokenSetId,
+                    attribute:
+                      collection && attributeKey && attributeValue
+                        ? {
+                            collection,
+                            key: attributeKey,
+                            value: attributeValue,
+                          }
+                        : undefined,
+                    collection:
+                      collection && params.excludeFlaggedTokens && !attributeKey && !attributeValue
+                        ? collection
+                        : undefined,
+                    isNonFlagged: params.excludeFlaggedTokens,
+                    orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
+                    source,
+                  },
+                },
+              },
+              orderIndex: i,
+            });
+
+            // Go on with the next bid
+            continue;
+          }
+
+          case "forward": {
+            if (!["reservoir"].includes(params.orderbook)) {
+              throw Boom.badRequest("Only `reservoir` is supported as orderbook");
+            }
+
+            let order: Sdk.Forward.Order | undefined;
+            if (token) {
+              const [contract, tokenId] = token.split(":");
+              order = await forwardBuyToken.build({
+                ...params,
+                maker,
+                contract,
+                tokenId,
+              });
+            } else if (tokenSetId || (collection && attributeKey && attributeValue)) {
+              order = await forwardBuyAttribute.build({
+                ...params,
+                maker,
+                collection,
+                attributes: [
+                  {
+                    key: attributeKey,
+                    value: attributeValue,
+                  },
+                ],
+              });
+            } else if (collection) {
+              order = await forwardBuyCollection.build({
+                ...params,
+                maker,
+                collection,
+              });
+            } else {
+              throw Boom.internal("Wrong metadata");
+            }
+
+            if (!order) {
+              throw Boom.internal("Failed to generate order");
+            }
+
+            // Check the maker's approval
+            let approvalTx: TxData | undefined;
+            const wethApproval = await currency.getAllowance(
+              maker,
+              Sdk.Forward.Addresses.Exchange[config.chainId]
+            );
+            if (bn(wethApproval).lt(bn(order.params.unitPrice).mul(order.params.amount))) {
+              approvalTx = currency.approveTransaction(
+                maker,
+                Sdk.Forward.Addresses.Exchange[config.chainId]
+              );
+            }
+
+            const exchange = new Sdk.Forward.Exchange(config.chainId);
+            const vault = await exchange.contract.connect(baseProvider).vaults(maker);
+            if (vault === AddressZero) {
+              steps[0].items.push({
+                status: "incomplete",
+                data: exchange.createVaultTx(maker),
+              });
+            }
+
+            steps[1].items.push({
+              status: !wrapEthTx ? "complete" : "incomplete",
+              data: wrapEthTx,
+              orderIndex: i,
+            });
+            steps[2].items.push({
+              status: !approvalTx ? "complete" : "incomplete",
+              data: approvalTx,
+              orderIndex: i,
+            });
+            steps[3].items.push({
+              status: "incomplete",
+              data: {
+                sign: order.getSignatureData(),
+                post: {
+                  endpoint: "/order/v3",
+                  method: "POST",
+                  body: {
+                    order: {
+                      kind: "forward",
+                      data: {
+                        ...order.params,
+                      },
+                    },
+                    tokenSetId,
+                    attribute:
+                      collection && attributeKey && attributeValue
+                        ? {
+                            collection,
+                            key: attributeKey,
+                            value: attributeValue,
+                          }
+                        : undefined,
+                    collection:
+                      collection && !attributeKey && !attributeValue ? collection : undefined,
+                    isNonFlagged: params.excludeFlaggedTokens,
+                    orderbook: params.orderbook,
+                    orderbookApiKey: params.orderbookApiKey,
                     source,
                   },
                 },
@@ -711,7 +837,7 @@ export const getExecuteBidV4Options: RouteOptions = {
       }
 
       // We should only have a single ETH wrapping transaction
-      if (steps[0].items.length > 1) {
+      if (steps[1].items.length > 1) {
         let amount = bn(0);
         for (let i = 0; i < steps[0].items.length; i++) {
           const itemAmount = bn(steps[0].items[i].data?.value || 0);
@@ -724,14 +850,14 @@ export const getExecuteBidV4Options: RouteOptions = {
           const weth = new Sdk.Common.Helpers.Weth(baseProvider, config.chainId);
           const wethWrapTx = weth.depositTransaction(maker, amount);
 
-          steps[0].items = [
+          steps[1].items = [
             {
               status: "incomplete",
               data: wethWrapTx,
             },
           ];
         } else {
-          steps[0].items = [];
+          steps[1].items = [];
         }
       }
 
@@ -750,7 +876,12 @@ export const getExecuteBidV4Options: RouteOptions = {
 
       return { steps };
     } catch (error) {
-      logger.error(`get-execute-bid-${version}-handler`, `Handler failure: ${error}`);
+      if (error instanceof Boom.Boom && error.output.statusCode === 400) {
+        logger.warn(`get-execute-bid-${version}-handler`, `Handler failure: ${error}`);
+      } else {
+        logger.error(`get-execute-bid-${version}-handler`, `Handler failure: ${error}`);
+      }
+
       throw error;
     }
   },

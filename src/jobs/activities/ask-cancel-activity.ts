@@ -4,9 +4,19 @@ import _ from "lodash";
 import { getActivityHash } from "@/jobs/activities/utils";
 import { UserActivitiesEntityInsertParams } from "@/models/user-activities/user-activities-entity";
 import { UserActivities } from "@/models/user-activities";
+import { Tokens } from "@/models/tokens";
+import { logger } from "@/common/logger";
 
 export class AskCancelActivity {
   public static async handleEvent(data: SellOrderCancelledEventData) {
+    const collectionId = await Tokens.getCollectionId(data.contract, data.tokenId);
+
+    // If no collection found
+    if (_.isNull(collectionId)) {
+      logger.warn("ask-cancel-activity", `No collection found for ${JSON.stringify(data)}`);
+      return;
+    }
+
     const activityHash = getActivityHash(
       data.transactionHash,
       data.logIndex.toString(),
@@ -17,8 +27,9 @@ export class AskCancelActivity {
       hash: activityHash,
       type: ActivityType.ask_cancel,
       contract: data.contract,
-      collectionId: data.contract,
+      collectionId,
       tokenId: data.tokenId,
+      orderId: data.orderId,
       fromAddress: data.maker,
       toAddress: null,
       price: data.price,
@@ -30,6 +41,7 @@ export class AskCancelActivity {
         transactionHash: data.transactionHash,
         logIndex: data.logIndex,
         batchIndex: data.batchIndex,
+        orderSourceIdInt: data.orderSourceIdInt,
       },
     } as ActivitiesEntityInsertParams;
 
@@ -57,4 +69,5 @@ export type SellOrderCancelledEventData = {
   batchIndex: number;
   blockHash: string;
   timestamp: number;
+  orderSourceIdInt: number;
 };

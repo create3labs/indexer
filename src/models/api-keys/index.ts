@@ -1,17 +1,23 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import _ from "lodash";
 import { Request } from "@hapi/hapi";
 
 import { idb, redb } from "@/common/db";
 import { logger } from "@/common/logger";
 import { redis } from "@/common/redis";
-import { ApiKeyEntity } from "@/models/api-keys/api-key-entity";
+import { ApiKeyEntity, ApiKeyUpdateParams } from "@/models/api-keys/api-key-entity";
 import getUuidByString from "uuid-by-string";
+import { channels } from "@/pubsub/channels";
+import axios from "axios";
+import { getNetworkName } from "@/config/network";
+import { config } from "@/config/index";
 
 export type ApiKeyRecord = {
   app_name: string;
   website: string;
   email: string;
+  tier: number;
   key?: string;
 };
 
@@ -20,6 +26,8 @@ export type NewApiKeyResponse = {
 };
 
 export class ApiKeyManager {
+  private static apiKeys: Map<string, ApiKeyEntity> = new Map();
+
   /**
    * Create a new key, leave the ApiKeyRecord.key empty to generate a new key (uuid) in this function
    *
@@ -31,10 +39,12 @@ export class ApiKeyManager {
       values.key = getUuidByString(`${values.key}${values.email}${values.website}`);
     }
 
+    let created;
+
     // Create the record in the database
     try {
-      await idb.none(
-        "INSERT INTO api_keys (${this:name}) values (${this:csv}) ON CONFLICT DO NOTHING",
+      created = await idb.oneOrNone(
+        "INSERT INTO api_keys (${this:name}) VALUES (${this:csv}) ON CONFLICT DO NOTHING RETURNING 1",
         values
       );
     } catch (e) {
@@ -51,9 +61,18 @@ export class ApiKeyManager {
       // Let's continue here, even if we can't write to redis, we should be able to check the values against the db
     }
 
+    if (created) {
+      await ApiKeyManager.notifyApiKeyCreated(values);
+    }
+
     return {
       key: values.key,
     };
+  }
+
+  public static async deleteCachedApiKey(key: string) {
+    ApiKeyManager.apiKeys.delete(key); // Delete from local memory cache
+    await redis.del(`api-key:${key}`); // Delete from redis cache
   }
 
   /**
@@ -65,27 +84,46 @@ export class ApiKeyManager {
    * @param key
    */
   public static async getApiKey(key: string): Promise<ApiKeyEntity | null> {
+    const cachedApiKey = ApiKeyManager.apiKeys.get(key);
+    if (cachedApiKey) {
+      return cachedApiKey;
+    }
+
+    // Timeout for redis
+    const timeout = new Promise<null>((resolve) => {
+      setTimeout(resolve, 1000, null);
+    });
+
     const redisKey = `api-key:${key}`;
 
     try {
-      const apiKey = await redis.get(redisKey);
+      const apiKey = await Promise.race([redis.get(redisKey), timeout]);
 
       if (apiKey) {
         if (apiKey == "empty") {
           return null;
         } else {
-          return new ApiKeyEntity(JSON.parse(apiKey));
+          const apiKeyEntity = new ApiKeyEntity(JSON.parse(apiKey));
+          ApiKeyManager.apiKeys.set(key, apiKeyEntity); // Set in local memory storage
+          return apiKeyEntity;
         }
       } else {
         // check if it exists in the database
-        const fromDb = await redb.oneOrNone(`SELECT * FROM api_keys WHERE key = $/key/`, { key });
+        const fromDb = await redb.oneOrNone(
+          `SELECT * FROM api_keys WHERE key = $/key/ AND active = true`,
+          { key }
+        );
 
         if (fromDb) {
-          await redis.set(redisKey, JSON.stringify(fromDb));
-          return new ApiKeyEntity(fromDb);
+          Promise.race([redis.set(redisKey, JSON.stringify(fromDb)), timeout]); // Set in redis (no need to wait)
+          const apiKeyEntity = new ApiKeyEntity(fromDb);
+          ApiKeyManager.apiKeys.set(key, apiKeyEntity); // Set in local memory storage
+          return apiKeyEntity;
         } else {
-          await redis.set(redisKey, "empty");
-          await redis.expire(redisKey, 3600 * 24);
+          const pipeline = redis.pipeline();
+          pipeline.set(redisKey, "empty");
+          pipeline.expire(redisKey, 3600 * 24);
+          Promise.race([pipeline.exec(), timeout]); // Set in redis (no need to wait)
         }
       }
     } catch (error) {
@@ -128,6 +166,14 @@ export class ApiKeyManager {
       log.origin = request.headers["origin"];
     }
 
+    if (request.headers["x-rkui-version"]) {
+      log.rkuiVersion = request.headers["x-rkui-version"];
+    }
+
+    if (request.headers["x-rkc-version"]) {
+      log.rkcVersion = request.headers["x-rkc-version"];
+    }
+
     if (request.info.referrer) {
       log.referrer = request.info.referrer;
     }
@@ -139,8 +185,7 @@ export class ApiKeyManager {
     // Add key information if it exists
     if (key) {
       try {
-        //  const apiKey = await ApiKeyManager.getApiKey(key);
-        const apiKey = null;
+        const apiKey = await ApiKeyManager.getApiKey(key);
 
         // There is a key, set that key information
         if (apiKey) {
@@ -160,5 +205,92 @@ export class ApiKeyManager {
     }
 
     logger.info("metrics", JSON.stringify(log));
+  }
+
+  public static async update(key: string, fields: ApiKeyUpdateParams) {
+    let updateString = "";
+    const replacementValues = {
+      key,
+    };
+
+    _.forEach(fields, (value, fieldName) => {
+      if (!_.isUndefined(value)) {
+        updateString += `${_.snakeCase(fieldName)} = $/${fieldName}/,`;
+        (replacementValues as any)[fieldName] = value;
+      }
+    });
+
+    updateString = _.trimEnd(updateString, ",");
+
+    const query = `UPDATE api_keys
+                   SET ${updateString}
+                   WHERE key = $/key/`;
+
+    await idb.none(query, replacementValues);
+
+    await ApiKeyManager.deleteCachedApiKey(key); // reload the cache
+    await redis.publish(channels.apiKeyUpdated, JSON.stringify({ key }));
+  }
+
+  static async notifyApiKeyCreated(values: ApiKeyRecord) {
+    await axios
+      .post(
+        config.slackApiKeyWebhookUrl,
+        JSON.stringify({
+          text: "API Key created",
+          blocks: [
+            {
+              type: "header",
+              text: {
+                type: "plain_text",
+                text: "API Key created",
+              },
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `New API Key created on *${getNetworkName()}*`,
+              },
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Key:* ${values.key}`,
+              },
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*AppName:* ${values.app_name}`,
+              },
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Website:* ${values.website}`,
+              },
+            },
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `*Email:* ${values.email}`,
+              },
+            },
+          ],
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      )
+      .catch(() => {
+        // Skip on any errors
+      });
   }
 }

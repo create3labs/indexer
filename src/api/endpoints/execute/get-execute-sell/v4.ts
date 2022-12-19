@@ -11,17 +11,18 @@ import { baseProvider } from "@/common/provider";
 import { bn, formatEth, regex, toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import { Sources } from "@/models/sources";
-import { generateBidDetails } from "@/orderbook/orders";
+import { generateBidDetailsV5 } from "@/orderbook/orders";
 import { getNftApproval } from "@/orderbook/orders/common/helpers";
 
 const version = "v4";
 
 export const getExecuteSellV4Options: RouteOptions = {
   description: "Sell tokens (accept bids)",
-  tags: ["api", "Router"],
+  tags: ["api", "x-deprecated"],
   plugins: {
     "hapi-swagger": {
       order: 10,
+      deprecated: true,
     },
   },
   validate: {
@@ -41,11 +42,18 @@ export const getExecuteSellV4Options: RouteOptions = {
         .description(
           "Address of wallet filling the order. Example: `0xF296178d553C8Ec21A2fBD2c5dDa8CA9ac905A00`"
         ),
+      quantity: Joi.number()
+        .integer()
+        .positive()
+        .description(
+          "Quantity of tokens user is selling. Only compatible when selling a single ERC1155 token. Example: `5`"
+        ),
       source: Joi.string()
         .lowercase()
         .pattern(regex.domain)
-        .required()
-        .description("Filling source used for attribution. Example: `reservoir.market`"),
+        .description(
+          `Domain of your app that is filling the order, e.g. \`myapp.xyz\`. This is used to attribute the "fill source" of sales in on-chain analytics, to help your app get discovered. Learn more <a href='https://docs.reservoir.tools/docs/calldata-attribution'>here</a>`
+        ),
       onlyPath: Joi.boolean()
         .default(false)
         .description("If true, only the path will be returned."),
@@ -124,6 +132,7 @@ export const getExecuteSellV4Options: RouteOptions = {
               AND orders.side = 'buy'
               AND orders.fillability_status = 'fillable'
               AND orders.approval_status = 'approved'
+              AND orders.quantity_remaining >= $/quantity/
               AND (orders.taker = '\\x0000000000000000000000000000000000000000' OR orders.taker IS NULL)
             LIMIT 1
           `,
@@ -131,6 +140,7 @@ export const getExecuteSellV4Options: RouteOptions = {
             id: payload.orderId,
             contract: toBuffer(contract),
             tokenId,
+            quantity: payload.quantity ?? 1,
           }
         );
       } else {
@@ -156,6 +166,7 @@ export const getExecuteSellV4Options: RouteOptions = {
               AND orders.side = 'buy'
               AND orders.fillability_status = 'fillable'
               AND orders.approval_status = 'approved'
+              AND orders.quantity_remaining >= $/quantity/
               AND (orders.taker = '\\x0000000000000000000000000000000000000000' OR orders.taker IS NULL)
             ORDER BY orders.value DESC
             LIMIT 1
@@ -163,8 +174,15 @@ export const getExecuteSellV4Options: RouteOptions = {
           {
             contract: toBuffer(contract),
             tokenId,
+            quantity: payload.quantity ?? 1,
           }
         );
+      }
+
+      if (payload.quantity) {
+        if (orderResult.token_kind !== "erc1155") {
+          throw Boom.badRequest("Only ERC1155 orders support a quantity");
+        }
       }
 
       if (!orderResult) {
@@ -179,16 +197,17 @@ export const getExecuteSellV4Options: RouteOptions = {
           orderId: orderResult.id,
           contract,
           tokenId,
-          quantity: 1,
-          source: sourceId ? sources.get(sourceId).domain : null,
+          quantity: payload.quantity ?? 1,
+          source: sourceId ? sources.get(sourceId)?.domain ?? null : null,
           // TODO: Add support for multiple currencies
           currency: Sdk.Common.Addresses.Weth[config.chainId],
           quote: formatEth(orderResult.price),
           rawQuote: orderResult.price,
         },
       ];
-      const bidDetails = await generateBidDetails(
+      const bidDetails = await generateBidDetailsV5(
         {
+          id: orderResult.id,
           kind: orderResult.kind,
           rawData: orderResult.raw_data,
         },
@@ -196,6 +215,7 @@ export const getExecuteSellV4Options: RouteOptions = {
           kind: orderResult.token_kind,
           contract,
           tokenId,
+          amount: payload.quantity,
         }
       );
 
@@ -204,9 +224,11 @@ export const getExecuteSellV4Options: RouteOptions = {
         return { path };
       }
 
-      const router = new Sdk.Router.Router(config.chainId, baseProvider);
+      const router = new Sdk.RouterV5.Router(config.chainId, baseProvider, {
+        x2y2ApiKey: config.x2y2ApiKey,
+      });
       const tx = await router.fillBidTx(bidDetails!, payload.taker, {
-        referrer: payload.source,
+        source: payload.source,
       });
 
       // Set up generic filling steps
@@ -234,7 +256,7 @@ export const getExecuteSellV4Options: RouteOptions = {
         },
       ];
 
-      // X2Y2 bids are to be filled directly (because the V5 router does not support them)
+      // X2Y2/Sudoswap bids are to be filled directly (because the V5 router does not support them)
       if (bidDetails.kind === "x2y2") {
         const isApproved = await getNftApproval(
           bidDetails.contract,
@@ -247,6 +269,35 @@ export const getExecuteSellV4Options: RouteOptions = {
             baseProvider,
             bidDetails.contract
           ).approveTransaction(payload.taker, Sdk.X2Y2.Addresses.Exchange[config.chainId]);
+
+          steps[0].items.push({
+            status: "incomplete",
+            data: {
+              ...approveTx,
+              maxFeePerGas: payload.maxFeePerGas
+                ? bn(payload.maxFeePerGas).toHexString()
+                : undefined,
+              maxPriorityFeePerGas: payload.maxPriorityFeePerGas
+                ? bn(payload.maxPriorityFeePerGas).toHexString()
+                : undefined,
+            },
+          });
+        }
+      }
+      if (bidDetails.kind === "sudoswap") {
+        const isApproved = await getNftApproval(
+          bidDetails.contract,
+          payload.taker,
+          Sdk.Sudoswap.Addresses.RouterWithRoyalties[config.chainId]
+        );
+        if (!isApproved) {
+          const approveTx = new Sdk.Common.Helpers.Erc721(
+            baseProvider,
+            bidDetails.contract
+          ).approveTransaction(
+            payload.taker,
+            Sdk.Sudoswap.Addresses.RouterWithRoyalties[config.chainId]
+          );
 
           steps[0].items.push({
             status: "incomplete",

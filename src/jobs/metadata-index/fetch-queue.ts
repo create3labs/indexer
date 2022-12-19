@@ -97,7 +97,7 @@ if (config.doBackgroundWork) {
         await metadataIndexProcess.addToQueue(data.method);
       }
     },
-    { connection: redis.duplicate(), concurrency: 3 }
+    { connection: redis.duplicate(), concurrency: 5 }
   );
 
   worker.on("error", (error) => {
@@ -127,6 +127,15 @@ async function getTokensForCollection(
   return tokens.map((t) => {
     return { collection, contract: fromBuffer(t.contract), tokenId: t.token_id } as RefreshTokens;
   });
+}
+
+export function getIndexingMethod(community: string | null) {
+  switch (community) {
+    case "sound.xyz":
+      return config.metadataIndexingMethod; // "soundxyz";
+  }
+
+  return config.metadataIndexingMethod;
 }
 
 export type MetadataIndexInfo =

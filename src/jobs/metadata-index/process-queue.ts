@@ -85,10 +85,7 @@ if (config.doBackgroundWork) {
         logger.info(QUEUE_NAME, `Rate Limited. rateLimitExpiresIn: ${rateLimitExpiresIn}`);
       }
 
-      const count = 20;
-
-      const queryParams = new URLSearchParams();
-      queryParams.append("method", method);
+      const count = method == "soundxyz" ? 10 : 20;
 
       // Get the tokens from the list
       const pendingRefreshTokens = new PendingRefreshTokens(method);
@@ -826,6 +823,7 @@ if (config.doBackgroundWork) {
         if (url?.startsWith(JSON_BASE64_PREFIX)) {
           const base64Data = url.replace(JSON_BASE64_PREFIX, "");
           const decoded = JSON.parse(new Buffer(base64Data, "base64").toString("utf-8"));
+
           metadatas.push({
             ...mapMetadata(decoded),
             ...refreshToken,
@@ -842,8 +840,6 @@ if (config.doBackgroundWork) {
                 ...refreshToken,
               });
             } catch (e) {
-              // eslint-disable-next-line no-console
-              console.log(e);
               return retry(e);
             }
           });

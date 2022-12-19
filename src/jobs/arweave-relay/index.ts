@@ -53,6 +53,44 @@ export const addPendingOrdersLooksRare = async (
   }
 };
 
+export const addPendingOrdersForward = async (
+  data: { order: Sdk.Forward.Order; schemaHash?: string; source?: string }[]
+) => {
+  if (config.arweaveRelayerKey && data.length) {
+    await redis.rpush(
+      PENDING_DATA_KEY,
+      ...data.map(({ order, schemaHash }) =>
+        JSON.stringify({
+          kind: "forward",
+          data: {
+            ...order.params,
+            schemaHash,
+          },
+        })
+      )
+    );
+  }
+};
+
+export const addPendingOrdersUniverse = async (
+  data: { order: Sdk.Universe.Order; schemaHash?: string; source?: string }[]
+) => {
+  if (config.arweaveRelayerKey && data.length) {
+    await redis.rpush(
+      PENDING_DATA_KEY,
+      ...data.map(({ order, schemaHash }) =>
+        JSON.stringify({
+          kind: "universe",
+          data: {
+            ...order.params,
+            schemaHash,
+          },
+        })
+      )
+    );
+  }
+};
+
 export const addPendingOrdersZeroExV4 = async (
   data: { order: Sdk.ZeroExV4.Order; schemaHash?: string; source?: string }[]
 ) => {
@@ -72,15 +110,53 @@ export const addPendingOrdersZeroExV4 = async (
   }
 };
 
-export const addPendingOrdersOpenDao = async (
-  data: { order: Sdk.OpenDao.Order; schemaHash?: string; source?: string }[]
+export const addPendingOrdersElement = async (
+  data: { order: Sdk.Element.Order; schemaHash?: string; source?: string }[]
 ) => {
   if (config.arweaveRelayerKey && data.length) {
     await redis.rpush(
       PENDING_DATA_KEY,
       ...data.map(({ order, schemaHash }) =>
         JSON.stringify({
-          kind: "opendao",
+          kind: "element",
+          data: {
+            ...order.params,
+            schemaHash,
+          },
+        })
+      )
+    );
+  }
+};
+
+export const addPendingOrdersRarible = async (
+  data: { order: Sdk.Rarible.Order; schemaHash?: string; source?: string }[]
+) => {
+  if (config.arweaveRelayerKey && data.length) {
+    await redis.rpush(
+      PENDING_DATA_KEY,
+      ...data.map(({ order, schemaHash }) =>
+        JSON.stringify({
+          kind: "rarible",
+          data: {
+            ...order.params,
+            schemaHash,
+          },
+        })
+      )
+    );
+  }
+};
+
+export const addPendingOrdersBlur = async (
+  data: { order: Sdk.Blur.Order; schemaHash?: string; source?: string }[]
+) => {
+  if (config.arweaveRelayerKey && data.length) {
+    await redis.rpush(
+      PENDING_DATA_KEY,
+      ...data.map(({ order, schemaHash }) =>
+        JSON.stringify({
+          kind: "blur",
           data: {
             ...order.params,
             schemaHash,

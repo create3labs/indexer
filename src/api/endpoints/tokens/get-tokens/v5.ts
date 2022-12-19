@@ -9,6 +9,7 @@ import { redb } from "@/common/db";
 import { logger } from "@/common/logger";
 import { getJoiPriceObject, JoiPrice } from "@/common/joi";
 import {
+  bn,
   buildContinuation,
   formatEth,
   fromBuffer,
@@ -18,6 +19,7 @@ import {
 } from "@/common/utils";
 import { config } from "@/config/index";
 import { Sources } from "@/models/sources";
+import { Assets } from "@/utils/assets";
 
 const version = "v5";
 
@@ -38,6 +40,12 @@ export const getTokensV5Options: RouteOptions = {
         .description(
           "Filter to a particular collection with collection-id. Example: `0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63`"
         ),
+      collectionsSetId: Joi.string()
+        .lowercase()
+        .description("Filter to a particular collection set."),
+      community: Joi.string()
+        .lowercase()
+        .description("Filter to a particular community. Example: `artblocks`"),
       contract: Joi.string()
         .lowercase()
         .pattern(regex.address)
@@ -66,16 +74,21 @@ export const getTokensV5Options: RouteOptions = {
       attributes: Joi.object()
         .unknown()
         .description("Filter to a particular attribute. Example: `attributes[Type]=Original`"),
-      source: Joi.string().description("Domain of the order source. Example `opensea.io`"),
+      source: Joi.string().description(
+        "Domain of the order source. Example `opensea.io` (Only listed tokens are returned when filtering by source)"
+      ),
+      flagStatus: Joi.number()
+        .allow(-1, 0, 1)
+        .description("-1 = All tokens (default)\n0 = Non flagged tokens\n1 = Flagged tokens"),
       sortBy: Joi.string()
-        .valid("floorAskPrice", "tokenId")
+        .valid("floorAskPrice", "tokenId", "rarity")
         .default("floorAskPrice")
         .description("Order the items are returned in the response."),
       sortDirection: Joi.string().lowercase().valid("asc", "desc"),
       limit: Joi.number()
         .integer()
         .min(1)
-        .max(50)
+        .max(100)
         .default(20)
         .description("Amount of items returned in response."),
       includeTopBid: Joi.boolean()
@@ -84,14 +97,25 @@ export const getTokensV5Options: RouteOptions = {
       includeAttributes: Joi.boolean()
         .default(false)
         .description("If true, attributes will be returned in the response."),
+      includeQuantity: Joi.boolean()
+        .default(false)
+        .description(
+          "If true, quantity filled and quantity remaining will be returned in the response."
+        ),
+      includeDynamicPricing: Joi.boolean()
+        .default(false)
+        .description("If true, dynamic pricing data will be returned in the response."),
+      normalizeRoyalties: Joi.boolean()
+        .default(false)
+        .description("If true, prices will include missing royalties to be added on-top."),
       continuation: Joi.string()
         .pattern(regex.base64)
         .description("Use continuation token to request next offset of items."),
     })
-      .or("collection", "contract", "tokens", "tokenSetId")
-      .oxor("collection", "contract", "tokens", "tokenSetId")
+      .or("collection", "contract", "tokens", "tokenSetId", "community", "collectionsSetId")
+      .oxor("collection", "contract", "tokens", "tokenSetId", "community", "collectionsSetId")
       .with("attributes", "collection")
-      .with("source", "collection"),
+      .with("flagStatus", "collection"),
   },
   response: {
     schema: Joi.object({
@@ -107,6 +131,9 @@ export const getTokensV5Options: RouteOptions = {
             kind: Joi.string().allow(null, ""),
             isFlagged: Joi.boolean().default(false),
             lastFlagUpdate: Joi.string().allow(null, ""),
+            lastFlagChange: Joi.string().allow(null, ""),
+            rarity: Joi.number().unsafe().allow(null),
+            rarityRank: Joi.number().unsafe().allow(null),
             collection: Joi.object({
               id: Joi.string().allow(null),
               name: Joi.string().allow(null, ""),
@@ -129,8 +156,8 @@ export const getTokensV5Options: RouteOptions = {
                   value: Joi.string(),
                   tokenCount: Joi.number(),
                   onSaleCount: Joi.number(),
-                  floorAskPrice: Joi.number().allow(null),
-                  topBidValue: Joi.number().allow(null),
+                  floorAskPrice: Joi.number().unsafe().allow(null),
+                  topBidValue: Joi.number().unsafe().allow(null),
                 })
               )
               .optional(),
@@ -142,6 +169,12 @@ export const getTokensV5Options: RouteOptions = {
               maker: Joi.string().lowercase().pattern(regex.address).allow(null),
               validFrom: Joi.number().unsafe().allow(null),
               validUntil: Joi.number().unsafe().allow(null),
+              quantityFilled: Joi.number().unsafe().allow(null),
+              quantityRemaining: Joi.number().unsafe().allow(null),
+              dynamicPricing: Joi.object({
+                kind: Joi.string().valid("dutch", "pool"),
+                data: Joi.object(),
+              }),
               source: Joi.object().allow(null),
             },
             topBid: Joi.object({
@@ -150,6 +183,16 @@ export const getTokensV5Options: RouteOptions = {
               maker: Joi.string().lowercase().pattern(regex.address).allow(null),
               validFrom: Joi.number().unsafe().allow(null),
               validUntil: Joi.number().unsafe().allow(null),
+              source: Joi.object().allow(null),
+              feeBreakdown: Joi.array()
+                .items(
+                  Joi.object({
+                    kind: Joi.string(),
+                    recipient: Joi.string().lowercase().pattern(regex.address).allow(null),
+                    bps: Joi.number(),
+                  })
+                )
+                .allow(null),
             }).optional(),
           }),
         })
@@ -173,12 +216,17 @@ export const getTokensV5Options: RouteOptions = {
         LEFT JOIN LATERAL (
           SELECT
             o.id AS top_buy_id,
+            o.normalized_value AS top_buy_normalized_value,
+            o.currency_normalized_value AS top_buy_currency_normalized_value,
             o.maker AS top_buy_maker,
             o.currency AS top_buy_currency,
+            o.fee_breakdown AS top_buy_fee_breakdown,
             o.currency_price AS top_buy_currency_price,
             o.currency_value AS top_buy_currency_value,
             o.price AS top_buy_price,
             o.value AS top_buy_value,
+            o.source_id_int AS top_buy_source_id_int,
+            o.missing_royalties AS top_buy_missing_royalties,
             DATE_PART('epoch', LOWER(o.valid_between)) AS top_buy_valid_from,
             COALESCE(
               NULLIF(DATE_PART('epoch', UPPER(o.valid_between)), 'Infinity'),
@@ -231,6 +279,136 @@ export const getTokensV5Options: RouteOptions = {
       `;
     }
 
+    let selectFloorData: string;
+    if (query.normalizeRoyalties) {
+      selectFloorData = `
+        t.normalized_floor_sell_id AS floor_sell_id,
+        t.normalized_floor_sell_maker AS floor_sell_maker,
+        t.normalized_floor_sell_valid_from AS floor_sell_valid_from,
+        t.normalized_floor_sell_valid_to AS floor_sell_valid_to,
+        t.normalized_floor_sell_source_id_int AS floor_sell_source_id_int,
+        t.normalized_floor_sell_value AS floor_sell_value,
+        t.normalized_floor_sell_currency AS floor_sell_currency,
+        t.normalized_floor_sell_currency_value AS floor_sell_currency_value
+      `;
+    } else {
+      selectFloorData = `
+        t.floor_sell_id,
+        t.floor_sell_maker,
+        t.floor_sell_valid_from,
+        t.floor_sell_valid_to,
+        t.floor_sell_source_id_int,
+        t.floor_sell_value,
+        t.floor_sell_currency,
+        t.floor_sell_currency_value
+      `;
+    }
+
+    let includeQuantityQuery = "";
+    let selectIncludeQuantity = "";
+    if (query.includeQuantity) {
+      selectIncludeQuantity = ", q.*";
+      includeQuantityQuery = `
+        LEFT JOIN LATERAL (
+          SELECT
+            o.quantity_filled AS floor_sell_quantity_filled,
+            o.quantity_remaining AS floor_sell_quantity_remaining
+          FROM
+            orders o
+          WHERE
+            o.id = t.floor_sell_id
+        ) q ON TRUE
+      `;
+    }
+
+    let includeDynamicPricingQuery = "";
+    let selectIncludeDynamicPricing = "";
+    if (query.includeDynamicPricing) {
+      selectIncludeDynamicPricing = ", d.*";
+      includeDynamicPricingQuery = `
+        LEFT JOIN LATERAL (
+          SELECT
+            o.kind AS floor_sell_order_kind,
+            o.dynamic AS floor_sell_dynamic,
+            o.raw_data AS floor_sell_raw_data,
+            o.missing_royalties AS floor_sell_missing_royalties
+          FROM orders o
+          WHERE o.id = t.floor_sell_id
+        ) d ON TRUE
+      `;
+    }
+
+    let sourceQuery = "";
+    if (query.source) {
+      const sources = await Sources.getInstance();
+      let source = sources.getByName(query.source, false);
+      if (!source) {
+        source = sources.getByDomain(query.source, false);
+      }
+
+      if (!source) {
+        return {
+          tokens: [],
+          continuation: null,
+        };
+      }
+
+      (query as any).source = source?.id;
+      selectFloorData = "s.*";
+
+      const sourceConditions: string[] = [];
+      sourceConditions.push(`o.side = 'sell'`);
+      sourceConditions.push(`o.fillability_status = 'fillable'`);
+      sourceConditions.push(`o.approval_status = 'approved'`);
+      sourceConditions.push(`o.source_id_int = $/source/`);
+
+      if (query.contract) {
+        sourceConditions.push(`tst.contract = $/contract/`);
+      } else if (query.collection) {
+        let contractString = query.collection;
+        if (query.collection.includes(":")) {
+          const [contract, ,] = query.collection.split(":");
+          contractString = contract;
+        }
+
+        (query as any).contract = contractString;
+        sourceConditions.push(`tst.contract = $/contract/`);
+      }
+
+      sourceQuery = `
+        JOIN LATERAL (
+          SELECT
+                  DISTINCT ON (token_id, contract)
+                  tst.token_id AS token_id,
+                  tst.contract AS contract,
+                  o.id AS floor_sell_id,
+                  o.maker AS floor_sell_maker,
+                  o.id AS source_floor_sell_id,
+                  date_part('epoch', lower(o.valid_between)) AS floor_sell_valid_from,
+                  coalesce(
+                    nullif(date_part('epoch', upper(o.valid_between)), 'Infinity'),
+                    0
+                  ) AS floor_sell_valid_to,
+                  o.source_id_int AS floor_sell_source_id_int,
+                  ${
+                    query.normalizeRoyalties ? "o.normalized_value" : "o.value"
+                  } AS floor_sell_value,
+                  o.currency AS floor_sell_currency,
+                  o.currency_normalized_value AS floor_sell_currency_value
+          FROM orders o
+          JOIN token_sets_tokens tst ON o.token_set_id = tst.token_set_id
+          ${
+            sourceConditions.length
+              ? " WHERE " + sourceConditions.map((c) => `(${c})`).join(" AND ")
+              : ""
+          }
+          ORDER BY token_id, contract, ${
+            query.normalizeRoyalties ? "o.normalized_value" : "o.value"
+          }
+        ) s ON s.contract = t.contract AND s.token_id = t.token_id      
+      `;
+    }
+
     try {
       let baseQuery = `
         SELECT
@@ -243,16 +421,12 @@ export const getTokensV5Options: RouteOptions = {
           t.collection_id,
           c.name AS collection_name,
           con.kind,
-          t.floor_sell_id,
-          t.floor_sell_maker,
-          t.floor_sell_valid_from,
-          t.floor_sell_valid_to,
-          t.floor_sell_source_id_int,
-          t.floor_sell_value,
-          t.floor_sell_currency,
-          t.floor_sell_currency_value,
+          ${selectFloorData},
+          t.rarity_score,
+          t.rarity_rank,
           t.is_flagged,
           t.last_flag_update,
+          t.last_flag_change,
           c.slug,
           t.last_buy_value,
           t.last_buy_timestamp,
@@ -270,12 +444,15 @@ export const getTokensV5Options: RouteOptions = {
           ) AS owner
           ${selectAttributes}
           ${selectTopBid}
+          ${selectIncludeQuantity}
+          ${selectIncludeDynamicPricing}
         FROM tokens t
         ${topBidQuery}
-        JOIN collections c
-          ON t.collection_id = c.id
-        JOIN contracts con
-          ON t.contract = con.address
+        ${sourceQuery}
+        ${includeQuantityQuery}
+        ${includeDynamicPricingQuery}
+        JOIN collections c ON t.collection_id = c.id
+        JOIN contracts con ON t.contract = con.address
       `;
 
       if (query.tokenSetId) {
@@ -283,6 +460,13 @@ export const getTokensV5Options: RouteOptions = {
           JOIN token_sets_tokens tst
             ON t.contract = tst.contract
             AND t.token_id = tst.token_id
+        `;
+      }
+
+      if (query.collectionsSetId) {
+        baseQuery += `
+          JOIN collections_sets_collections csc
+            ON t.collection_id = csc.collection_id
         `;
       }
 
@@ -311,6 +495,14 @@ export const getTokensV5Options: RouteOptions = {
       const conditions: string[] = [];
       if (query.collection) {
         conditions.push(`t.collection_id = $/collection/`);
+      }
+
+      if (_.indexOf([0, 1], query.flagStatus) !== -1) {
+        conditions.push(`t.is_flagged = $/flagStatus/`);
+      }
+
+      if (query.community) {
+        conditions.push("c.community = $/community/");
       }
 
       if (query.contract) {
@@ -343,15 +535,8 @@ export const getTokensV5Options: RouteOptions = {
         conditions.push(`tst.token_set_id = $/tokenSetId/`);
       }
 
-      if (query.source) {
-        const sources = await Sources.getInstance();
-        let source = sources.getByName(query.source, false);
-        if (!source) {
-          source = sources.getByDomain(query.source);
-        }
-
-        (query as any).source = source?.id;
-        conditions.push(`t.floor_sell_source_id_int = $/source/`);
+      if (query.collectionsSetId) {
+        conditions.push(`csc.collections_set_id = $/collectionsSetId/`);
       }
 
       // Continue with the next page, this depends on the sorting used
@@ -367,6 +552,17 @@ export const getTokensV5Options: RouteOptions = {
           }
 
           switch (query.sortBy) {
+            case "rarity": {
+              query.sortDirection = query.sortDirection || "desc"; // Default sorting for rarity is DESC
+              const sign = query.sortDirection == "desc" ? "<" : ">";
+              conditions.push(
+                `(t.rarity_score, t.token_id) ${sign} ($/contRarity/, $/contTokenId/)`
+              );
+              (query as any).contRarity = contArr[0];
+              (query as any).contTokenId = contArr[1];
+              break;
+            }
+
             case "tokenId": {
               const sign = query.sortDirection == "desc" ? "<" : ">";
               conditions.push(`(t.contract, t.token_id) ${sign} ($/contContract/, $/contTokenId/)`);
@@ -380,15 +576,21 @@ export const getTokensV5Options: RouteOptions = {
             default:
               {
                 const sign = query.sortDirection == "desc" ? "<" : ">";
+                const sortColumn = query.source
+                  ? "s.floor_sell_value"
+                  : query.normalizeRoyalties
+                  ? "t.normalized_floor_sell_value"
+                  : "t.floor_sell_value";
+
                 if (contArr[0] !== "null") {
                   conditions.push(`(
-                    (t.floor_sell_value, t.token_id) ${sign} ($/floorSellValue/, $/tokenId/)
-                    OR (t.floor_sell_value IS null)
+                    (${sortColumn}, t.token_id) ${sign} ($/floorSellValue/, $/tokenId/)
+                    OR (${sortColumn} IS null)
                   )`);
                   (query as any).floorSellValue = contArr[0];
                   (query as any).tokenId = contArr[1];
                 } else {
-                  conditions.push(`(t.floor_sell_value is null AND t.token_id ${sign} $/tokenId/)`);
+                  conditions.push(`(${sortColumn} is null AND t.token_id ${sign} $/tokenId/)`);
                   (query as any).tokenId = contArr[1];
                 }
               }
@@ -407,9 +609,16 @@ export const getTokensV5Options: RouteOptions = {
 
       // Sorting
 
-      // Only allow sorting on floorSell when we filter by collection / attributes / tokenSetId
-      if (query.collection || query.attributes || query.tokenSetId) {
+      // Only allow sorting on floorSell when we filter by collection / attributes / tokenSetId / rarity
+      if (query.collection || query.attributes || query.tokenSetId || query.rarity) {
         switch (query.sortBy) {
+          case "rarity": {
+            baseQuery += ` ORDER BY t.rarity_score ${
+              query.sortDirection || "DESC"
+            } NULLS LAST, t.token_id ${query.sortDirection || "DESC"}`;
+            break;
+          }
+
           case "tokenId": {
             baseQuery += ` ORDER BY t.contract, t.token_id ${query.sortDirection || "ASC"}`;
             break;
@@ -417,7 +626,13 @@ export const getTokensV5Options: RouteOptions = {
 
           case "floorAskPrice":
           default: {
-            baseQuery += ` ORDER BY t.floor_sell_value ${
+            const sortColumn = query.source
+              ? "s.floor_sell_value"
+              : query.normalizeRoyalties
+              ? "t.normalized_floor_sell_value"
+              : "t.floor_sell_value";
+
+            baseQuery += ` ORDER BY ${sortColumn} ${
               query.sortDirection || "ASC"
             } NULLS LAST, t.token_id`;
             break;
@@ -433,6 +648,7 @@ export const getTokensV5Options: RouteOptions = {
 
       /** Depending on how we sorted, we use that sorting key to determine the next page of results
           Possible formats:
+            rarity_tokenid
             floorAskPrice_tokenid
             contract_tokenid
             tokenid
@@ -446,6 +662,10 @@ export const getTokensV5Options: RouteOptions = {
         // when we have collection/attributes
         if (query.collection || query.attributes || query.tokenSetId) {
           switch (query.sortBy) {
+            case "rarity":
+              continuation = rawResult[rawResult.length - 1].rarity_score || "null";
+              break;
+
             case "tokenId":
               continuation = fromBuffer(rawResult[rawResult.length - 1].contract);
               break;
@@ -467,11 +687,41 @@ export const getTokensV5Options: RouteOptions = {
 
       const sources = await Sources.getInstance();
       const result = rawResult.map(async (r) => {
+        const feeBreakdown = r.top_buy_fee_breakdown;
+
+        if (query.normalizeRoyalties && r.top_buy_missing_royalties) {
+          for (let i = 0; i < r.top_buy_missing_royalties.length; i++) {
+            if (!Object.keys(r.top_buy_missing_royalties[i]).includes("bps")) {
+              return;
+            }
+
+            const index: number = r.top_buy_fee_breakdown.findIndex(
+              (fee: { recipient: string }) =>
+                fee.recipient === r.top_buy_missing_royalties[i].recipient
+            );
+
+            if (index > -1) {
+              feeBreakdown[index].bps += Number(r.top_buy_missing_royalties[i].bps);
+            } else {
+              const missingRoyalty = {
+                bps: Number(r.top_buy_missing_royalties[i].bps),
+                kind: "royalty",
+                recipient: r.top_buy_missing_royalties[i].recipient,
+              };
+              feeBreakdown.push(missingRoyalty);
+            }
+          }
+        }
+
         const contract = fromBuffer(r.contract);
         const tokenId = r.token_id;
 
-        const source = r.floor_sell_value
+        const floorSellSource = r.floor_sell_value
           ? sources.get(Number(r.floor_sell_source_id_int), contract, tokenId)
+          : undefined;
+
+        const topBuySource = r.top_buy_id
+          ? sources.get(Number(r.top_buy_source_id_int), contract, tokenId)
           : undefined;
 
         // Use default currencies for backwards compatibility with entries
@@ -483,21 +733,93 @@ export const getTokensV5Options: RouteOptions = {
           ? fromBuffer(r.top_buy_currency)
           : Sdk.Common.Addresses.Weth[config.chainId];
 
+        let dynamicPricing = undefined;
+        if (query.includeDynamicPricing) {
+          // Add missing royalties on top of the raw prices
+          const missingRoyalties = query.normalizeRoyalties
+            ? ((r.floor_sell_missing_royalties ?? []) as any[])
+                .map((mr: any) => bn(mr.amount))
+                .reduce((a, b) => a.add(b), bn(0))
+            : bn(0);
+
+          if (r.floor_sell_raw_data) {
+            if (r.floor_sell_dynamic && r.floor_sell_order_kind === "seaport") {
+              const order = new Sdk.Seaport.Order(config.chainId, r.floor_sell_raw_data);
+
+              // Dutch auction
+              dynamicPricing = {
+                kind: "dutch",
+                data: {
+                  price: {
+                    start: await getJoiPriceObject(
+                      {
+                        gross: {
+                          amount: bn(order.getMatchingPrice(order.params.startTime))
+                            .add(missingRoyalties)
+                            .toString(),
+                        },
+                      },
+                      floorAskCurrency
+                    ),
+                    end: await getJoiPriceObject(
+                      {
+                        gross: {
+                          amount: bn(order.getMatchingPrice(order.params.endTime))
+                            .add(missingRoyalties)
+                            .toString(),
+                        },
+                      },
+                      floorAskCurrency
+                    ),
+                  },
+                  time: {
+                    start: order.params.startTime,
+                    end: order.params.endTime,
+                  },
+                },
+              };
+            } else if (r.floor_sell_order_kind === "sudoswap") {
+              // Pool orders
+              dynamicPricing = {
+                kind: "pool",
+                data: {
+                  pool: r.floor_sell_raw_data.pair,
+                  prices: await Promise.all(
+                    (r.floor_sell_raw_data.extra.prices as string[]).map((price) =>
+                      getJoiPriceObject(
+                        {
+                          gross: {
+                            amount: bn(price).add(missingRoyalties).toString(),
+                          },
+                        },
+                        floorAskCurrency
+                      )
+                    )
+                  ),
+                },
+              };
+            }
+          }
+        }
+
         return {
           token: {
             contract,
             tokenId,
             name: r.name,
             description: r.description,
-            image: r.image,
+            image: Assets.getLocalAssetsLink(r.image),
             media: r.media,
             kind: r.kind,
             isFlagged: Boolean(Number(r.is_flagged)),
             lastFlagUpdate: r.last_flag_update ? new Date(r.last_flag_update).toISOString() : null,
+            lastFlagChange: r.last_flag_change ? new Date(r.last_flag_change).toISOString() : null,
+            rarity: r.rarity_score,
+            rarityRank: r.rarity_rank,
             collection: {
               id: r.collection_id,
               name: r.collection_name,
-              image: r.collection_image,
+              image: Assets.getLocalAssetsLink(r.collection_image),
               slug: r.slug,
             },
             lastBuy: {
@@ -543,12 +865,21 @@ export const getTokensV5Options: RouteOptions = {
               maker: r.floor_sell_maker ? fromBuffer(r.floor_sell_maker) : null,
               validFrom: r.floor_sell_value ? r.floor_sell_valid_from : null,
               validUntil: r.floor_sell_value ? r.floor_sell_valid_to : null,
+              quantityFilled:
+                query.includeQuantity && r.floor_sell_value
+                  ? r.floor_sell_quantity_filled
+                  : undefined,
+              quantityRemaining:
+                query.includeQuantity && r.floor_sell_value
+                  ? r.floor_sell_quantity_remaining
+                  : undefined,
+              dynamicPricing,
               source: {
-                id: source?.address,
-                domain: source?.domain,
-                name: source?.metadata.title || source?.name,
-                icon: source?.metadata.icon,
-                url: source?.metadata.url,
+                id: floorSellSource?.address,
+                domain: floorSellSource?.domain,
+                name: floorSellSource?.getTitle(),
+                icon: floorSellSource?.getIcon(),
+                url: floorSellSource?.metadata.url,
               },
             },
             topBid: query.includeTopBid
@@ -558,8 +889,12 @@ export const getTokensV5Options: RouteOptions = {
                     ? await getJoiPriceObject(
                         {
                           net: {
-                            amount: r.top_buy_currency_value ?? r.top_buy_value,
-                            nativeAmount: r.top_buy_value,
+                            amount: query.normalizeRoyalties
+                              ? r.top_buy_currency_normalized_value ?? r.top_buy_value
+                              : r.top_buy_currency_value ?? r.top_buy_value,
+                            nativeAmount: query.normalizeRoyalties
+                              ? r.top_buy_normalized_value ?? r.top_buy_value
+                              : r.top_buy_value,
                           },
                           gross: {
                             amount: r.top_buy_currency_price ?? r.top_buy_price,
@@ -572,6 +907,14 @@ export const getTokensV5Options: RouteOptions = {
                   maker: r.top_buy_maker ? fromBuffer(r.top_buy_maker) : null,
                   validFrom: r.top_buy_valid_from,
                   validUntil: r.top_buy_value ? r.top_buy_valid_until : null,
+                  source: {
+                    id: topBuySource?.address,
+                    domain: topBuySource?.domain,
+                    name: topBuySource?.getTitle(),
+                    icon: topBuySource?.getIcon(),
+                    url: topBuySource?.metadata.url,
+                  },
+                  feeBreakdown: feeBreakdown,
                 }
               : undefined,
           },

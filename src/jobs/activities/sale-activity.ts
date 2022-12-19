@@ -6,19 +6,25 @@ import { Activities } from "@/models/activities";
 import { getActivityHash } from "@/jobs/activities/utils";
 import { UserActivitiesEntityInsertParams } from "@/models/user-activities/user-activities-entity";
 import { UserActivities } from "@/models/user-activities";
+import { AddressZero } from "@ethersproject/constants";
 
 export class SaleActivity {
   public static async handleEvent(data: FillEventData) {
-    const token = await Tokens.getByContractAndTokenId(data.contract, data.tokenId, true);
+    // Paid mints will be recorded as mints
+    if (data.fromAddress == AddressZero) {
+      return;
+    }
+
+    const collectionId = await Tokens.getCollectionId(data.contract, data.tokenId);
 
     // If no token found
-    if (_.isNull(token)) {
-      logger.warn("sale-activity", `No token found for ${JSON.stringify(data)}`);
+    if (_.isNull(collectionId)) {
+      logger.warn("sale-activity", `No token בםךךקבאןםמ for ${JSON.stringify(data)}`);
       return;
     }
 
     // If no collection found
-    if (!token.collectionId) {
+    if (!collectionId) {
       logger.warn("sale-activity", `No collection found for ${JSON.stringify(data)}`);
     }
 
@@ -32,8 +38,9 @@ export class SaleActivity {
       type: ActivityType.sale,
       hash: activityHash,
       contract: data.contract,
-      collectionId: token.collectionId,
+      collectionId,
       tokenId: data.tokenId,
+      orderId: data.orderId,
       fromAddress: data.fromAddress,
       toAddress: data.toAddress,
       price: data.price,
@@ -45,6 +52,7 @@ export class SaleActivity {
         logIndex: data.logIndex,
         batchIndex: data.batchIndex,
         orderId: data.orderId,
+        orderSourceIdInt: data.orderSourceIdInt,
       },
     } as ActivitiesEntityInsertParams;
 
@@ -75,4 +83,5 @@ export type FillEventData = {
   blockHash: string;
   timestamp: number;
   orderId: string;
+  orderSourceIdInt: number;
 };

@@ -19,7 +19,7 @@ export const getOrdersBidsV3Options: RouteOptions = {
   description: "Bids (offers)",
   notes:
     "Get a list of bids (offers), filtered by token, collection or maker. This API is designed for efficiently ingesting large volumes of orders, for external processing",
-  tags: ["api", "Orders"],
+  tags: ["api", "x-deprecated"],
   plugins: {
     "hapi-swagger": {
       order: 5,
@@ -28,7 +28,7 @@ export const getOrdersBidsV3Options: RouteOptions = {
   validate: {
     query: Joi.object({
       ids: Joi.alternatives(Joi.string(), Joi.array().items(Joi.string())).description(
-        "Order id(s) to search for."
+        "Order id(s) to search for (only fillable and approved orders will be returned)"
       ),
       token: Joi.string()
         .lowercase()
@@ -62,10 +62,18 @@ export const getOrdersBidsV3Options: RouteOptions = {
           )
       ),
       status: Joi.string()
-        .valid("active", "inactive", "expired")
+        .when("maker", {
+          is: Joi.exist(),
+          then: Joi.valid("active", "inactive"),
+          otherwise: Joi.valid("active"),
+        })
         .description(
           "active = currently valid, inactive = temporarily invalid, expired = permanently invalid\n\nAvailable when filtering by maker, otherwise only valid orders will be returned"
         ),
+      source: Joi.string()
+        .pattern(regex.domain)
+        .description("Filter to a source by domain. Example: `opensea.io`"),
+      native: Joi.boolean().description("If true, results will filter only Reservoir orders."),
       includeMetadata: Joi.boolean()
         .default(false)
         .description("If true, metadata is included in the response."),
@@ -78,8 +86,11 @@ export const getOrdersBidsV3Options: RouteOptions = {
           then: Joi.valid("price", "createdAt"),
           otherwise: Joi.valid("createdAt"),
         })
+        .valid("createdAt", "price")
         .default("createdAt")
-        .description("Order the items are returned in the response."),
+        .description(
+          "Order the items are returned in the response, Sorting by price allowed only when filtering by token"
+        ),
       continuation: Joi.string()
         .pattern(regex.base64)
         .description("Use continuation token to request next offset of items."),
@@ -89,10 +100,7 @@ export const getOrdersBidsV3Options: RouteOptions = {
         .max(1000)
         .default(50)
         .description("Amount of items returned in response."),
-    })
-      .or("token", "tokenSetId", "maker", "contracts")
-      .oxor("token", "tokenSetId")
-      .with("status", "maker"),
+    }).oxor("token", "tokenSetId", "contracts", "ids", "source", "native"),
   },
   response: {
     schema: Joi.object({
@@ -110,6 +118,8 @@ export const getOrdersBidsV3Options: RouteOptions = {
           price: JoiPrice,
           validFrom: Joi.number().required(),
           validUntil: Joi.number().required(),
+          quantityFilled: Joi.number().unsafe(),
+          quantityRemaining: Joi.number().unsafe(),
           metadata: Joi.alternatives(
             Joi.object({
               kind: "token",
@@ -154,7 +164,7 @@ export const getOrdersBidsV3Options: RouteOptions = {
           isReservoir: Joi.boolean().allow(null),
           createdAt: Joi.string().required(),
           updatedAt: Joi.string().required(),
-          rawData: Joi.object().optional(),
+          rawData: Joi.object().optional().allow(null),
         })
       ),
       continuation: Joi.string().pattern(regex.base64).allow(null),
@@ -213,23 +223,37 @@ export const getOrdersBidsV3Options: RouteOptions = {
 
             WHEN orders.token_set_id LIKE 'list:%' THEN
               (SELECT
-                json_build_object(
-                  'kind', 'attribute',
-                  'data', json_build_object(
-                    'collectionName', collections.name,
-                    'attributes', ARRAY[json_build_object('key', attribute_keys.key, 'value', attributes.value)],
-                    'image', (collections.metadata ->> 'imageUrl')::TEXT
-                  )
-                )
+                CASE
+                  WHEN token_sets.attribute_id IS NULL THEN
+                    (SELECT
+                      json_build_object(
+                        'kind', 'collection',
+                        'data', json_build_object(
+                          'collectionName', collections.name,
+                          'image', (collections.metadata ->> 'imageUrl')::TEXT
+                        )
+                      )
+                    FROM collections
+                    WHERE token_sets.collection_id = collections.id)
+                  ELSE
+                    (SELECT
+                      json_build_object(
+                        'kind', 'attribute',
+                        'data', json_build_object(
+                          'collectionName', collections.name,
+                          'attributes', ARRAY[json_build_object('key', attribute_keys.key, 'value', attributes.value)],
+                          'image', (collections.metadata ->> 'imageUrl')::TEXT
+                        )
+                      )
+                    FROM attributes
+                    JOIN attribute_keys
+                    ON attributes.attribute_key_id = attribute_keys.id
+                    JOIN collections
+                    ON attribute_keys.collection_id = collections.id
+                    WHERE token_sets.attribute_id = attributes.id)
+                END  
               FROM token_sets
-              JOIN attributes
-                ON token_sets.attribute_id = attributes.id
-              JOIN attribute_keys
-                ON attributes.attribute_key_id = attribute_keys.id
-              JOIN collections
-                ON attribute_keys.collection_id = collections.id
-              WHERE token_sets.id = orders.token_set_id)
-
+              WHERE token_sets.id = orders.token_set_id)  
             ELSE NULL
           END
         ) AS metadata
@@ -266,6 +290,8 @@ export const getOrdersBidsV3Options: RouteOptions = {
             0
           ) AS valid_until,
           orders.source_id_int,
+          orders.quantity_filled,
+          orders.quantity_remaining,
           orders.fee_bps,
           orders.fee_breakdown,
           COALESCE(
@@ -281,7 +307,11 @@ export const getOrdersBidsV3Options: RouteOptions = {
       `;
 
       // Filters
-      const conditions: string[] = [`orders.side = 'buy'`];
+      const conditions: string[] = [
+        "EXISTS (SELECT FROM token_sets WHERE id = orders.token_set_id)",
+        "orders.side = 'buy'",
+      ];
+
       let orderStatusFilter = `orders.fillability_status = 'fillable' AND orders.approval_status = 'approved'`;
 
       if (query.ids) {
@@ -326,16 +356,26 @@ export const getOrdersBidsV3Options: RouteOptions = {
             orderStatusFilter = `orders.fillability_status = 'no-balance' OR (orders.fillability_status = 'fillable' AND orders.approval_status != 'approved')`;
             break;
           }
-
-          case "expired": {
-            // Invalid orders
-            orderStatusFilter = `orders.fillability_status != 'fillable' AND orders.fillability_status != 'no-balance'`;
-            break;
-          }
         }
 
         (query as any).maker = toBuffer(query.maker);
         conditions.push(`orders.maker = $/maker/`);
+      }
+
+      if (query.source) {
+        const sources = await Sources.getInstance();
+        const source = sources.getByDomain(query.source);
+
+        if (!source) {
+          return { orders: [] };
+        }
+
+        (query as any).source = source.id;
+        conditions.push(`orders.source_id_int = $/source/`);
+      }
+
+      if (query.native) {
+        conditions.push(`orders.is_reservoir`);
       }
 
       conditions.push(orderStatusFilter);
@@ -366,9 +406,6 @@ export const getOrdersBidsV3Options: RouteOptions = {
       } else {
         baseQuery += ` ORDER BY orders.created_at DESC, orders.id DESC`;
       }
-
-      // HACK: Maximum limit is 100
-      query.limit = Math.min(query.limit, 100);
 
       // Pagination
       baseQuery += ` LIMIT $/limit/`;
@@ -428,11 +465,13 @@ export const getOrdersBidsV3Options: RouteOptions = {
           ),
           validFrom: Number(r.valid_from),
           validUntil: Number(r.valid_until),
+          quantityFilled: Number(r.quantity_filled),
+          quantityRemaining: Number(r.quantity_remaining),
           metadata: query.includeMetadata ? r.metadata : undefined,
           source: {
             id: source?.address,
-            name: source?.metadata.title || source?.name,
-            icon: source?.metadata.icon,
+            name: source?.getTitle(),
+            icon: source?.getIcon(),
             url: source?.metadata.url,
           },
           feeBps: Number(r.fee_bps),

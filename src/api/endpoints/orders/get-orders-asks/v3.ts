@@ -26,7 +26,7 @@ export const getOrdersAsksV3Options: RouteOptions = {
   description: "Asks (listings)",
   notes:
     "Get a list of asks (listings), filtered by token, collection or maker. This API is designed for efficiently ingesting large volumes of orders, for external processing",
-  tags: ["api", "Orders"],
+  tags: ["api", "x-deprecated"],
   plugins: {
     "hapi-swagger": {
       order: 5,
@@ -49,6 +49,9 @@ export const getOrdersAsksV3Options: RouteOptions = {
         .description(
           "Filter to a particular user. Example: `0xF296178d553C8Ec21A2fBD2c5dDa8CA9ac905A00`"
         ),
+      community: Joi.string()
+        .lowercase()
+        .description("Filter to a particular community. Example: `artblocks`"),
       contracts: Joi.alternatives()
         .try(
           Joi.array().max(50).items(Joi.string().lowercase().pattern(regex.address)),
@@ -58,10 +61,21 @@ export const getOrdersAsksV3Options: RouteOptions = {
           "Filter to an array of contracts. Example: `0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63`"
         ),
       status: Joi.string()
-        .valid("active", "inactive")
+        .when("maker", {
+          is: Joi.exist(),
+          then: Joi.valid("active", "inactive", "expired", "cancelled", "filled"),
+          otherwise: Joi.valid("active"),
+        })
         .description(
-          "active = currently valid, inactive = temporarily invalid\n\nAvailable when filtering by maker, otherwise only valid orders will be returned"
+          "active = currently valid\ninactive = temporarily invalid\nexpired, cancelled, filled = permanently invalid\n\nAvailable when filtering by maker, otherwise only valid orders will be returned"
         ),
+      source: Joi.alternatives()
+        .try(
+          Joi.array().max(50).items(Joi.string().lowercase().pattern(regex.domain)),
+          Joi.string().lowercase().pattern(regex.domain)
+        )
+        .description("Filter to an array of sources. Example: `opensea.io`"),
+      native: Joi.boolean().description("If true, results will filter only Reservoir orders."),
       includePrivate: Joi.boolean()
         .default(false)
         .description("If true, private orders are included in the response."),
@@ -71,14 +85,26 @@ export const getOrdersAsksV3Options: RouteOptions = {
       includeRawData: Joi.boolean()
         .default(false)
         .description("If true, raw data is included in the response."),
+      startTimestamp: Joi.number().description(
+        "Get events after a particular unix timestamp (inclusive)"
+      ),
+      endTimestamp: Joi.number().description(
+        "Get events before a particular unix timestamp (inclusive)"
+      ),
+      normalizeRoyalties: Joi.boolean()
+        .default(false)
+        .description("If true, prices will include missing royalties to be added on-top."),
       sortBy: Joi.string()
         .when("token", {
           is: Joi.exist(),
           then: Joi.valid("price", "createdAt"),
           otherwise: Joi.valid("createdAt"),
         })
+        .valid("createdAt", "price")
         .default("createdAt")
-        .description("Order the items are returned in the response."),
+        .description(
+          "Order the items are returned in the response, Sorting by price allowed only when filtering by token"
+        ),
       continuation: Joi.string()
         .pattern(regex.base64)
         .description("Use continuation token to request next offset of items."),
@@ -88,9 +114,7 @@ export const getOrdersAsksV3Options: RouteOptions = {
         .max(1000)
         .default(50)
         .description("Amount of items returned in response."),
-    })
-      .or("ids", "token", "contracts", "maker")
-      .with("status", "maker"),
+    }).with("community", "maker"),
   },
   response: {
     schema: Joi.object({
@@ -107,6 +131,8 @@ export const getOrdersAsksV3Options: RouteOptions = {
           price: JoiPrice,
           validFrom: Joi.number().required(),
           validUntil: Joi.number().required(),
+          quantityFilled: Joi.number().unsafe(),
+          quantityRemaining: Joi.number().unsafe(),
           metadata: Joi.alternatives(
             Joi.object({
               kind: "token",
@@ -150,9 +176,10 @@ export const getOrdersAsksV3Options: RouteOptions = {
             .allow(null),
           expiration: Joi.number().required(),
           isReservoir: Joi.boolean().allow(null),
+          isDynamic: Joi.boolean(),
           createdAt: Joi.string().required(),
           updatedAt: Joi.string().required(),
-          rawData: Joi.object().optional(),
+          rawData: Joi.object().optional().allow(null),
         })
       ),
       continuation: Joi.string().pattern(regex.base64).allow(null),
@@ -248,12 +275,18 @@ export const getOrdersAsksV3Options: RouteOptions = {
           orders.value,
           orders.currency_price,
           orders.currency_value,
+          orders.normalized_value,
+          orders.currency_normalized_value,
+          orders.missing_royalties,
+          dynamic,
           DATE_PART('epoch', LOWER(orders.valid_between)) AS valid_from,
           COALESCE(
             NULLIF(DATE_PART('epoch', UPPER(orders.valid_between)), 'Infinity'),
             0
           ) AS valid_until,
           orders.source_id_int,
+          orders.quantity_filled,
+          orders.quantity_remaining,
           orders.fee_bps,
           orders.fee_breakdown,
           COALESCE(
@@ -278,9 +311,28 @@ export const getOrdersAsksV3Options: RouteOptions = {
         FROM orders
       `;
 
+      // We default in the code so that these values don't appear in the docs
+      if (query.startTimestamp || query.endTimestamp) {
+        if (!query.startTimestamp) {
+          query.startTimestamp = 0;
+        }
+        if (!query.endTimestamp) {
+          query.endTimestamp = 9999999999;
+        }
+      }
+
       // Filters
-      const conditions: string[] = [`orders.side = 'sell'`];
-      let orderStatusFilter = `orders.fillability_status = 'fillable' AND orders.approval_status = 'approved'`;
+      const conditions: string[] =
+        query.startTimestamp || query.endTimestamp
+          ? [
+              `orders.created_at >= to_timestamp($/startTimestamp/)`,
+              `orders.created_at <= to_timestamp($/endTimestamp/)`,
+              `orders.side = 'sell'`,
+            ]
+          : [`orders.side = 'sell'`];
+
+      let communityFilter = "";
+      let orderStatusFilter = "";
 
       if (query.ids) {
         if (Array.isArray(query.ids)) {
@@ -288,6 +340,8 @@ export const getOrdersAsksV3Options: RouteOptions = {
         } else {
           conditions.push(`orders.id = $/ids/`);
         }
+      } else {
+        orderStatusFilter = `orders.fillability_status = 'fillable' AND orders.approval_status = 'approved'`;
       }
 
       if (query.token) {
@@ -322,10 +376,59 @@ export const getOrdersAsksV3Options: RouteOptions = {
             orderStatusFilter = `orders.fillability_status = 'no-balance' OR (orders.fillability_status = 'fillable' AND orders.approval_status != 'approved')`;
             break;
           }
+          case "expired": {
+            orderStatusFilter = `orders.fillability_status = 'expired'`;
+            break;
+          }
+          case "filled": {
+            orderStatusFilter = `orders.fillability_status = 'filled'`;
+            break;
+          }
+          case "cancelled": {
+            orderStatusFilter = `orders.fillability_status = 'cancelled'`;
+            break;
+          }
         }
 
         (query as any).maker = toBuffer(query.maker);
         conditions.push(`orders.maker = $/maker/`);
+
+        // Community filter is valid only when maker filter is passed
+        if (query.community) {
+          communityFilter =
+            "JOIN (SELECT DISTINCT contract FROM collections WHERE community = $/community/) c ON orders.contract = c.contract";
+        }
+      }
+
+      if (query.source) {
+        const sourcesIds = [];
+
+        const sources = await Sources.getInstance();
+
+        if (!_.isArray(query.source)) {
+          const source = sources.getByDomain(query.source);
+          if (source?.id) {
+            sourcesIds.push(source.id);
+          }
+        } else {
+          for (const s of query.source) {
+            const source = sources.getByDomain(s);
+            if (source?.id) {
+              sourcesIds.push(source.id);
+            }
+          }
+        }
+
+        if (_.isEmpty(sourcesIds)) {
+          return { orders: [] };
+        }
+
+        (query as any).source = sourcesIds;
+        conditions.push(`orders.source_id_int IN ($/source:csv/)`);
+      }
+
+      if (query.native) {
+        conditions.push(`orders.is_reservoir`);
       }
 
       if (!query.includePrivate) {
@@ -334,7 +437,9 @@ export const getOrdersAsksV3Options: RouteOptions = {
         );
       }
 
-      conditions.push(orderStatusFilter);
+      if (orderStatusFilter) {
+        conditions.push(orderStatusFilter);
+      }
 
       if (query.continuation) {
         const [priceOrCreatedAt, id] = splitContinuation(
@@ -352,19 +457,19 @@ export const getOrdersAsksV3Options: RouteOptions = {
           );
         }
       }
+
+      baseQuery += communityFilter;
+
       if (conditions.length) {
         baseQuery += " WHERE " + conditions.map((c) => `(${c})`).join(" AND ");
       }
 
       // Sorting
       if (query.sortBy === "price") {
-        baseQuery += ` ORDER BY orders.price, orders.id`;
+        baseQuery += ` ORDER BY orders.value, orders.id`;
       } else {
         baseQuery += ` ORDER BY orders.created_at DESC, orders.id DESC`;
       }
-
-      // HACK: Maximum limit is 100
-      query.limit = Math.min(query.limit, 100);
 
       // Pagination
       baseQuery += ` LIMIT $/limit/`;
@@ -386,6 +491,32 @@ export const getOrdersAsksV3Options: RouteOptions = {
 
       const sources = await Sources.getInstance();
       const result = rawResult.map(async (r) => {
+        const feeBreakdown = r.fee_breakdown;
+        let feeBps = r.fee_bps;
+
+        if (query.normalizeRoyalties && r.missing_royalties) {
+          for (let i = 0; i < r.missing_royalties.length; i++) {
+            if (!Object.keys(r.missing_royalties[i]).includes("bps")) {
+              break;
+            }
+            const index: number = r.fee_breakdown.findIndex(
+              (fee: { recipient: string }) => fee.recipient === r.missing_royalties[i].recipient
+            );
+
+            if (index > -1) {
+              feeBreakdown[index].bps += Number(r.missing_royalties[i].bps);
+            } else {
+              const missingRoyalty = {
+                bps: Number(r.missing_royalties[i].bps),
+                kind: "royalty",
+                recipient: r.missing_royalties[i].recipient,
+              };
+              feeBreakdown.push(missingRoyalty);
+              feeBps += Number(r.missing_royalties[i].bps);
+            }
+          }
+        }
+
         let source: SourcesEntity | undefined;
         if (r.token_set_id?.startsWith("token")) {
           const [, contract, tokenId] = r.token_set_id.split(":");
@@ -407,8 +538,10 @@ export const getOrdersAsksV3Options: RouteOptions = {
           price: await getJoiPriceObject(
             {
               gross: {
-                amount: r.currency_price ?? r.price,
-                nativeAmount: r.price,
+                amount: query.normalizeRoyalties
+                  ? r.currency_normalized_value ?? r.price
+                  : r.currency_price ?? r.price,
+                nativeAmount: query.normalizeRoyalties ? r.normalized_value ?? r.price : r.price,
               },
               net: {
                 amount: getNetAmount(r.currency_price ?? r.price, r.fee_bps),
@@ -423,17 +556,21 @@ export const getOrdersAsksV3Options: RouteOptions = {
           ),
           validFrom: Number(r.valid_from),
           validUntil: Number(r.valid_until),
+          quantityFilled: Number(r.quantity_filled),
+          quantityRemaining: Number(r.quantity_remaining),
           metadata: query.includeMetadata ? r.metadata : undefined,
           source: {
             id: source?.address,
-            name: source?.metadata.title || source?.name,
-            icon: source?.metadata.icon,
+            domain: source?.domain,
+            name: source?.getTitle(),
+            icon: source?.getIcon(),
             url: source?.metadata.url,
           },
-          feeBps: Number(r.fee_bps),
-          feeBreakdown: r.fee_breakdown,
+          feeBps: feeBps,
+          feeBreakdown: feeBreakdown,
           expiration: Number(r.expiration),
           isReservoir: r.is_reservoir,
+          isDynamic: Boolean(r.dynamic),
           createdAt: new Date(r.created_at * 1000).toISOString(),
           updatedAt: new Date(r.updated_at).toISOString(),
           rawData: query.includeRawData ? r.raw_data : undefined,

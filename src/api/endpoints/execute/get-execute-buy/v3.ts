@@ -4,7 +4,7 @@ import { AddressZero } from "@ethersproject/constants";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
 import * as Sdk from "@0xlol/sdk";
-import { ListingDetails } from "@0xlol/sdk/dist/router/types";
+import { ListingDetails } from "@0xlol/sdk/dist/router/v5/types";
 import Joi from "joi";
 
 import { redb } from "@/common/db";
@@ -13,7 +13,7 @@ import { baseProvider } from "@/common/provider";
 import { bn, formatPrice, fromBuffer, regex, toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import { Sources } from "@/models/sources";
-import { generateListingDetails } from "@/orderbook/orders";
+import { generateListingDetailsV5 } from "@/orderbook/orders";
 import { getCurrency } from "@/utils/currencies";
 
 const version = "v3";
@@ -67,7 +67,6 @@ export const getExecuteBuyV3Options: RouteOptions = {
       source: Joi.string()
         .lowercase()
         .pattern(regex.domain)
-        .required()
         .description("Filling source used for attribution. Example: `reservoir.market`"),
       referrer: Joi.string()
         .lowercase()
@@ -212,7 +211,7 @@ export const getExecuteBuyV3Options: RouteOptions = {
             contract,
             tokenId,
             quantity: 1,
-            source: source_id_int ? sources.get(source_id_int)?.domain : null,
+            source: source_id_int ? sources.get(source_id_int)?.domain ?? null : null,
             currency: fromBuffer(currency),
             quote: formatPrice(rawQuote, (await getCurrency(fromBuffer(currency))).decimals),
             rawQuote: rawQuote.toString(),
@@ -223,8 +222,9 @@ export const getExecuteBuyV3Options: RouteOptions = {
           }
 
           listingDetails.push(
-            generateListingDetails(
+            generateListingDetailsV5(
               {
+                id,
                 kind,
                 currency: fromBuffer(currency),
                 rawData: raw_data,
@@ -303,7 +303,7 @@ export const getExecuteBuyV3Options: RouteOptions = {
               contract,
               tokenId,
               quantity: quantityFilled,
-              source: source_id_int ? sources.get(source_id_int)?.name : null,
+              source: source_id_int ? sources.get(source_id_int)?.name ?? null : null,
               currency: fromBuffer(currency),
               quote: formatPrice(rawQuote, (await getCurrency(fromBuffer(currency))).decimals),
               rawQuote: rawQuote.toString(),
@@ -314,8 +314,9 @@ export const getExecuteBuyV3Options: RouteOptions = {
             }
 
             listingDetails.push(
-              generateListingDetails(
+              generateListingDetailsV5(
                 {
+                  id,
                   kind,
                   currency: fromBuffer(currency),
                   rawData: raw_data,
@@ -342,15 +343,23 @@ export const getExecuteBuyV3Options: RouteOptions = {
         return { path };
       }
 
-      const router = new Sdk.Router.Router(config.chainId, baseProvider);
+      const router = new Sdk.RouterV5.Router(config.chainId, baseProvider, {
+        x2y2ApiKey: config.x2y2ApiKey,
+      });
       const tx = await router.fillListingsTx(listingDetails, query.taker, {
-        referrer: query.source,
+        source: query.source,
         fee: {
           recipient: query.referrer,
           bps: query.referrerFeeBps,
         },
         partial: query.partial,
         forceRouter: query.forceRouter,
+        directFillingData: {
+          conduitKey:
+            config.chainId === 1
+              ? "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000"
+              : undefined,
+        },
       });
 
       // Set up generic filling steps

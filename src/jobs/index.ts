@@ -33,16 +33,10 @@ import * as removeUnsyncedEventsActivities from "@/jobs/activities/remove-unsync
 import * as arweaveSyncBackfill from "@/jobs/arweave-sync/backfill-queue";
 import * as arweaveSyncRealtime from "@/jobs/arweave-sync/realtime-queue";
 
-import * as backfillBlockTimestamps from "@/jobs/backfill/backfill-block-timestamps";
-import * as backfillCancelWyvernV23Orders from "@/jobs/backfill/backfill-cancel-wyvern-v23-orders";
-import * as backfillFillEventsCreatedAt from "@/jobs/backfill/backfill-fill-events-created-at";
-import * as backfillFillEventsFillSource from "@/jobs/backfill/backfill-fill-events-fill-source";
-import * as backfillFillEventsOrderSource from "@/jobs/backfill/backfill-fill-events-order-source";
-import * as backfillFillEventsWashTradingScore from "@/jobs/backfill/backfill-fill-events-wash-trading-score";
-import * as backfillLooksRareFills from "@/jobs/backfill/backfill-looks-rare-fills";
-import * as backfillTransactionBlockFields from "@/jobs/backfill/backfill-transaction-block-fields";
-import * as backfillTransactions from "@/jobs/backfill/backfill-transactions";
-import * as backfillCollectionsTopBid from "@/jobs/backfill/backfill-collections-top-bid";
+import * as backfillBlurSales from "@/jobs/backfill/backfill-blur-sales";
+import * as backfillMints from "@/jobs/backfill/backfill-mints";
+import * as backfillRefreshSudoswapOrders from "@/jobs/backfill/backfill-refresh-sudoswap-orders";
+import * as backCollectionsNonFlaggedFloorAsk from "@/jobs/backfill/backfill-collections-non-flagged-floor-ask";
 
 import * as topBidUpdate from "@/jobs/bid-updates/top-bid-update-queue";
 
@@ -50,9 +44,14 @@ import * as collectionsRefresh from "@/jobs/collections-refresh/collections-refr
 import * as collectionsRefreshCache from "@/jobs/collections-refresh/collections-refresh-cache";
 
 import * as collectionUpdatesFloorAsk from "@/jobs/collection-updates/floor-queue";
+import * as collectionUpdatesNormalizedFloorAsk from "@/jobs/collection-updates/normalized-floor-queue";
+import * as collectionUpdatesNonFlaggedFloorAsk from "@/jobs/collection-updates/non-flagged-floor-queue";
+
 import * as collectionUpdatesMetadata from "@/jobs/collection-updates/metadata-queue";
 import * as rarity from "@/jobs/collection-updates/rarity-queue";
 import * as collectionUpdatesTopBid from "@/jobs/collection-updates/top-bid-queue";
+import * as collectionRecalcFloorAsk from "@/jobs/collection-updates/recalc-floor-queue";
+import * as refreshContractCollectionsMetadata from "@/jobs/collection-updates/refresh-contract-collections-metadata-queue";
 
 import * as currencies from "@/jobs/currencies/index";
 
@@ -60,21 +59,26 @@ import * as dailyVolumes from "@/jobs/daily-volumes/daily-volumes";
 
 import * as exportData from "@/jobs/data-export/export-data";
 
+import * as eventsSyncProcessResyncRequest from "@/jobs/events-sync/process-resync-request-queue";
 import * as eventsSyncBackfill from "@/jobs/events-sync/backfill-queue";
 import * as eventsSyncBlockCheck from "@/jobs/events-sync/block-check-queue";
+import * as eventsSyncBackfillProcess from "@/jobs/events-sync/process/backfill";
+import * as eventsSyncRealtimeProcess from "@/jobs/events-sync/process/realtime";
 import * as eventsSyncRealtime from "@/jobs/events-sync/realtime-queue";
 import * as eventsSyncFtTransfersWriteBuffer from "@/jobs/events-sync/write-buffers/ft-transfers";
 import * as eventsSyncNftTransfersWriteBuffer from "@/jobs/events-sync/write-buffers/nft-transfers";
 
 import * as fillUpdates from "@/jobs/fill-updates/queue";
 
+import * as flagStatusProcessJob from "@/jobs/flag-status/process-queue";
+import * as flagStatusSyncJob from "@/jobs/flag-status/sync-queue";
+import * as flagStatusGenerateAttributeTokenSet from "@/jobs/flag-status/generate-attribute-token-set";
+import * as flagStatusGenerateCollectionTokenSet from "@/jobs/flag-status/generate-collection-token-set";
+
 import * as metadataIndexFetch from "@/jobs/metadata-index/fetch-queue";
 import * as metadataIndexProcess from "@/jobs/metadata-index/process-queue";
 import * as metadataIndexWrite from "@/jobs/metadata-index/write-queue";
 
-import * as backfillAcquiredAt from "@/jobs/nft-balance-updates/backfill-acquired-at-queue";
-import * as backfillNftBalanceFloorAskPrice from "@/jobs/nft-balance-updates/backfill-floor-ask-price-queue";
-import * as backfillNftBalanceTopBid from "@/jobs/nft-balance-updates/backfill-top-bid-queue";
 import * as updateNftBalanceFloorAskPrice from "@/jobs/nft-balance-updates/update-floor-ask-price-queue";
 import * as updateNftBalanceTopBid from "@/jobs/nft-balance-updates/update-top-bid-queue";
 
@@ -82,21 +86,18 @@ import * as orderFixes from "@/jobs/order-fixes/queue";
 import * as orderUpdatesById from "@/jobs/order-updates/by-id-queue";
 import * as orderUpdatesByMaker from "@/jobs/order-updates/by-maker-queue";
 import * as bundleOrderUpdatesByMaker from "@/jobs/order-updates/by-maker-bundle-queue";
-import * as removeBuyOrderEvents from "@/jobs/order-updates/remove-buy-order-events";
 
 import * as orderbookOrders from "@/jobs/orderbook/orders-queue";
 import * as orderbookPostOrderExternal from "@/jobs/orderbook/post-order-external";
-import * as resyncOrdersSource from "@/jobs/orderbook/resync-orders-source";
 import * as orderbookTokenSets from "@/jobs/orderbook/token-sets-queue";
 
 import * as fetchSourceInfo from "@/jobs/sources/fetch-source-info";
 
 import * as tokenUpdatesMint from "@/jobs/token-updates/mint-queue";
 import * as tokenRefreshCache from "@/jobs/token-updates/token-refresh-cache";
-import * as nonFlaggedTokenSet from "@/jobs/token-updates/non-flagged-token-set";
 import * as fetchCollectionMetadata from "@/jobs/token-updates/fetch-collection-metadata";
-import * as syncTokensFlagStatus from "@/jobs/token-updates/sync-tokens-flag-status";
-import * as syncCollectionsFlagStatus from "@/jobs/token-updates/sync-collection-flag-status";
+import * as tokenUpdatesFloorAsk from "@/jobs/token-updates/floor-queue";
+import * as tokenUpdatesNormalizedFloorAsk from "@/jobs/token-updates/normalized-floor-queue";
 
 import * as handleNewSellOrder from "@/jobs/update-attribute/handle-new-sell-order";
 import * as handleNewBuyOrder from "@/jobs/update-attribute/handle-new-buy-order";
@@ -114,16 +115,10 @@ export const allJobQueues = [
   arweaveSyncBackfill.queue,
   arweaveSyncRealtime.queue,
 
-  backfillBlockTimestamps.queue,
-  backfillCancelWyvernV23Orders.queue,
-  backfillFillEventsCreatedAt.queue,
-  backfillFillEventsFillSource.queue,
-  backfillFillEventsOrderSource.queue,
-  backfillFillEventsWashTradingScore.queue,
-  backfillLooksRareFills.queue,
-  backfillTransactionBlockFields.queue,
-  backfillTransactions.queue,
-  backfillCollectionsTopBid.queue,
+  backfillBlurSales.queue,
+  backfillMints.queue,
+  backfillRefreshSudoswapOrders.queue,
+  backCollectionsNonFlaggedFloorAsk.queue,
 
   currencies.queue,
 
@@ -133,29 +128,39 @@ export const allJobQueues = [
   collectionsRefreshCache.queue,
 
   collectionUpdatesFloorAsk.queue,
+  collectionUpdatesNormalizedFloorAsk.queue,
+  collectionUpdatesNonFlaggedFloorAsk.queue,
+
   collectionUpdatesMetadata.queue,
   rarity.queue,
   collectionUpdatesTopBid.queue,
+  collectionRecalcFloorAsk.queue,
+  refreshContractCollectionsMetadata.queue,
 
   dailyVolumes.queue,
 
   exportData.queue,
 
+  eventsSyncProcessResyncRequest.queue,
   eventsSyncBackfill.queue,
   eventsSyncBlockCheck.queue,
+  eventsSyncBackfillProcess.queue,
+  eventsSyncRealtimeProcess.queue,
   eventsSyncRealtime.queue,
   eventsSyncFtTransfersWriteBuffer.queue,
   eventsSyncNftTransfersWriteBuffer.queue,
 
   fillUpdates.queue,
 
+  flagStatusProcessJob.queue,
+  flagStatusSyncJob.queue,
+  flagStatusGenerateAttributeTokenSet.queue,
+  flagStatusGenerateCollectionTokenSet.queue,
+
   metadataIndexFetch.queue,
   metadataIndexProcess.queue,
   metadataIndexWrite.queue,
 
-  backfillAcquiredAt.queue,
-  backfillNftBalanceFloorAskPrice.queue,
-  backfillNftBalanceTopBid.queue,
   updateNftBalanceFloorAskPrice.queue,
   updateNftBalanceTopBid.queue,
 
@@ -163,21 +168,18 @@ export const allJobQueues = [
   orderUpdatesById.queue,
   orderUpdatesByMaker.queue,
   bundleOrderUpdatesByMaker.queue,
-  removeBuyOrderEvents.queue,
 
   orderbookOrders.queue,
   orderbookPostOrderExternal.queue,
   orderbookTokenSets.queue,
-  resyncOrdersSource.queue,
 
   fetchSourceInfo.queue,
 
   tokenUpdatesMint.queue,
   tokenRefreshCache.queue,
-  nonFlaggedTokenSet.queue,
   fetchCollectionMetadata.queue,
-  syncTokensFlagStatus.queue,
-  syncCollectionsFlagStatus.queue,
+  tokenUpdatesFloorAsk.queue,
+  tokenUpdatesNormalizedFloorAsk.queue,
 
   handleNewSellOrder.queue,
   handleNewBuyOrder.queue,

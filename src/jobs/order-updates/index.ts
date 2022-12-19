@@ -8,6 +8,7 @@ import { fromBuffer, now } from "@/common/utils";
 import { config } from "@/config/index";
 import * as orderUpdatesById from "@/jobs/order-updates/by-id-queue";
 import { getUSDAndNativePrices } from "@/utils/prices";
+import _ from "lodash";
 
 // Whenever an order changes its state (eg. a new order comes in,
 // a fill/cancel happens, an order gets expired, or an order gets
@@ -29,10 +30,10 @@ import "@/jobs/order-updates/by-maker-bundle-queue";
 if (config.doBackgroundWork) {
   // Handle expired orders
   cron.schedule(
-    "*/10 * * * * *",
+    "*/5 * * * * *",
     async () =>
       await redlock
-        .acquire(["expired-orders-check-lock"], (10 - 5) * 1000)
+        .acquire(["expired-orders-check-lock"], (5 - 3) * 1000)
         .then(async () => {
           logger.info("expired-orders-check", "Invalidating expired orders");
 
@@ -46,7 +47,7 @@ if (config.doBackgroundWork) {
                   FROM orders
                   WHERE upper(orders.valid_between) < now()
                     AND (orders.fillability_status = 'fillable' OR orders.fillability_status = 'no-balance')
-                  LIMIT 500
+                  LIMIT 2000
                 )
                 UPDATE orders SET
                   fillability_status = 'expired',
@@ -97,12 +98,13 @@ if (config.doBackgroundWork) {
             let done = false;
             while (!done) {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const dynamicOrders: { kind: string; id: string; raw_data: any }[] =
+              const dynamicOrders: { id: string; kind: string; currency: Buffer; raw_data: any }[] =
                 await idb.manyOrNone(
                   `
                     SELECT
-                      orders.kind,
                       orders.id,
+                      orders.kind,
+                      orders.currency,
                       orders.raw_data
                     FROM orders
                     WHERE orders.dynamic
@@ -116,24 +118,36 @@ if (config.doBackgroundWork) {
 
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const values: any[] = [];
-              for (const { kind, id, raw_data } of dynamicOrders) {
-                if (kind === "seaport") {
+              for (const { id, kind, currency, raw_data } of dynamicOrders) {
+                if (!_.isNull(raw_data) && kind === "seaport") {
                   const order = new Sdk.Seaport.Order(config.chainId, raw_data);
-                  const newPrice = order.getMatchingPrice().toString();
-                  values.push({
-                    id,
-                    price: newPrice,
-                    // TODO: We should have a generic method for deriving the `value` from `price`.
-                    value: newPrice,
-                  });
+                  const newCurrencyPrice = order.getMatchingPrice().toString();
+
+                  const prices = await getUSDAndNativePrices(
+                    fromBuffer(currency),
+                    newCurrencyPrice,
+                    now()
+                  );
+                  if (prices.nativePrice) {
+                    values.push({
+                      id,
+                      price: prices.nativePrice,
+                      currency_price: newCurrencyPrice,
+                      // TODO: We should have a generic method for deriving the `value` from `price`
+                      value: prices.nativePrice,
+                      currency_value: newCurrencyPrice,
+                    });
+                  }
                 }
               }
 
               const columns = new pgp.helpers.ColumnSet(
                 [
                   "?id",
-                  { name: "price", cast: "numeric(78, 0)" },
-                  { name: "value", cast: "numeric(78, 0)" },
+                  { name: "price", cast: "NUMERIC(78, 0)" },
+                  { name: "currency_price", cast: "NUMERIC(78, 0)" },
+                  { name: "value", cast: "NUMERIC(78, 0)" },
+                  { name: "currency_value", cast: "NUMERIC(78, 0) " },
                 ],
                 {
                   table: "orders",
@@ -189,15 +203,15 @@ if (config.doBackgroundWork) {
               const erc20Orders: {
                 id: string;
                 currency: Buffer;
-                price: string;
-                value: string;
+                currency_price: string;
+                currency_value: string;
               }[] = await idb.manyOrNone(
                 `
                   SELECT
                     orders.id,
                     orders.currency,
-                    orders.price,
-                    orders.value
+                    orders.currency_price,
+                    orders.currency_value
                   FROM orders
                   WHERE orders.needs_conversion
                     AND orders.fillability_status = 'fillable'
@@ -213,15 +227,15 @@ if (config.doBackgroundWork) {
               const values: any[] = [];
 
               const currentTime = now();
-              for (const { id, currency, price, value } of erc20Orders) {
+              for (const { id, currency, currency_price, currency_value } of erc20Orders) {
                 const dataForPrice = await getUSDAndNativePrices(
                   fromBuffer(currency),
-                  price,
+                  currency_price,
                   currentTime
                 );
                 const dataForValue = await getUSDAndNativePrices(
                   fromBuffer(currency),
-                  value,
+                  currency_value,
                   currentTime
                 );
                 if (dataForPrice.nativePrice && dataForValue.nativePrice) {

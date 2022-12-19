@@ -25,6 +25,7 @@ export type OrderMetadata = {
   };
   schemaHash?: string;
   source?: string;
+  target?: string;
 };
 
 // Underlying database model for an order
@@ -57,8 +58,11 @@ export type DbOrder = {
   fee_breakdown?: object | null;
   dynamic?: boolean | null;
   needs_conversion: boolean | null;
-  raw_data: object;
+  raw_data: object | null;
   expiration: string;
+  missing_royalties: object | null;
+  normalized_value: string | null;
+  currency_normalized_value: string | null;
 };
 
 const defaultSchemaHash = HashZero;

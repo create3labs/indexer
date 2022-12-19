@@ -23,6 +23,7 @@ export class BidActivity {
       contract: data.contract,
       collectionId: collectionId,
       tokenId: tokenId,
+      orderId: data.orderId,
       fromAddress: data.maker,
       toAddress: null,
       price: data.price,
@@ -31,6 +32,7 @@ export class BidActivity {
       eventTimestamp: data.timestamp,
       metadata: {
         orderId: data.orderId,
+        orderSourceIdInt: data.orderSourceIdInt,
       },
     } as ActivitiesEntityInsertParams;
 
@@ -53,4 +55,5 @@ export type NewBuyOrderEventData = {
   price: number;
   amount: number;
   timestamp: number;
+  orderSourceIdInt: number;
 };

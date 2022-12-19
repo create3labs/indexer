@@ -11,6 +11,7 @@ import * as currenciesQueue from "@/jobs/currencies/index";
 
 type CurrencyMetadata = {
   coingeckoCurrencyId?: string;
+  image?: string;
 };
 
 export type Currency = {
@@ -51,7 +52,7 @@ export const getCurrency = async (currencyAddress: string): Promise<Currency> =>
       let name: string | undefined;
       let symbol: string | undefined;
       let decimals: number | undefined;
-      let metadata: CurrencyMetadata = {};
+      let metadata: CurrencyMetadata | undefined;
 
       // If the currency is not available, then we try to retrieve its details
       try {
@@ -62,13 +63,20 @@ export const getCurrency = async (currencyAddress: string): Promise<Currency> =>
           `Failed to initially fetch ${currencyAddress} currency details: ${error}`
         );
 
-        // TODO: Although an edge case, we should ensure that when the job
-        // finally succeeds fetching the details of a currency, we also do
-        // update the memory cache (otherwise the cache will be stale).
+        if (getNetworkSettings().whitelistedCurrencies.has(currencyAddress)) {
+          ({ name, symbol, decimals, metadata } =
+            getNetworkSettings().whitelistedCurrencies.get(currencyAddress)!);
+        } else {
+          // TODO: Although an edge case, we should ensure that when the job
+          // finally succeeds fetching the details of a currency, we also do
+          // update the memory cache (otherwise the cache will be stale).
 
-        // Retry fetching the currency details
-        await currenciesQueue.addToQueue({ currency: currencyAddress });
+          // Retry fetching the currency details
+          await currenciesQueue.addToQueue({ currency: currencyAddress });
+        }
       }
+
+      metadata = metadata || {};
 
       await idb.none(
         `
@@ -130,7 +138,7 @@ export const tryGetCurrencyDetails = async (currencyAddress: string) => {
 
   const coingeckoNetworkId = getNetworkSettings().coingecko?.networkId;
   if (coingeckoNetworkId) {
-    const result: { id?: string } = await axios
+    const result: { id?: string; image?: { large?: string } } = await axios
       .get(
         `https://api.coingecko.com/api/v3/coins/${coingeckoNetworkId}/contract/${currencyAddress}`,
         { timeout: 10 * 1000 }
@@ -138,6 +146,9 @@ export const tryGetCurrencyDetails = async (currencyAddress: string) => {
       .then((response) => response.data);
     if (result.id) {
       metadata.coingeckoCurrencyId = result.id;
+    }
+    if (result.image?.large) {
+      metadata.image = result.image.large;
     }
   }
 

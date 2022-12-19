@@ -1,16 +1,24 @@
 // Exports
 
+export * as cryptopunks from "@/orderbook/orders/cryptopunks";
+export * as forward from "@/orderbook/orders/forward";
 export * as foundation from "@/orderbook/orders/foundation";
 export * as looksRare from "@/orderbook/orders/looks-rare";
-export * as openDao from "@/orderbook/orders/opendao";
 export * as seaport from "@/orderbook/orders/seaport";
+export * as sudoswap from "@/orderbook/orders/sudoswap";
 export * as x2y2 from "@/orderbook/orders/x2y2";
 export * as zeroExV4 from "@/orderbook/orders/zeroex-v4";
+export * as zora from "@/orderbook/orders/zora";
+export * as universe from "@/orderbook/orders/universe";
+export * as blur from "@/orderbook/orders/blur";
+export * as rarible from "@/orderbook/orders/rarible";
+export * as manifold from "@/orderbook/orders/manifold";
 
 // Imports
 
 import * as Sdk from "@0xlol/sdk";
-import { BidDetails, ListingDetails } from "@0xlol/sdk/dist/router/types";
+import * as SdkTypesV5 from "@0xlol/sdk/dist/router/v5/types";
+import * as SdkTypesV6 from "@0xlol/sdk/dist/router/v6/types";
 
 import { redb } from "@/common/db";
 import { config } from "@/config/index";
@@ -27,8 +35,6 @@ export type OrderKind =
   | "looks-rare"
   | "zeroex-v4-erc721"
   | "zeroex-v4-erc1155"
-  | "opendao-erc721"
-  | "opendao-erc1155"
   | "foundation"
   | "x2y2"
   | "seaport"
@@ -39,7 +45,13 @@ export type OrderKind =
   | "nouns"
   | "zora-v3"
   | "mint"
-  | "cryptopunks";
+  | "cryptopunks"
+  | "sudoswap"
+  | "universe"
+  | "nftx"
+  | "blur"
+  | "forward"
+  | "manifold";
 
 // In case we don't have the source of an order readily available, we use
 // a default value where possible (since very often the exchange protocol
@@ -59,7 +71,7 @@ mintsSources.set("0xfbeef911dc5821886e1dda71586d90ed28174b7d", "knownorigin.io")
 export const getOrderSourceByOrderKind = async (
   orderKind: OrderKind,
   address?: string
-): Promise<SourcesEntity | null> => {
+): Promise<SourcesEntity | undefined> => {
   try {
     const sources = await Sources.getInstance();
     switch (orderKind) {
@@ -86,26 +98,34 @@ export const getOrderSourceByOrderKind = async (
         return sources.getOrInsert("nouns.wtf");
       case "cryptopunks":
         return sources.getOrInsert("cryptopunks.app");
+      case "sudoswap":
+        return sources.getOrInsert("sudoswap.xyz");
+      case "universe":
+        return sources.getOrInsert("universe.xyz");
+      case "nftx":
+        return sources.getOrInsert("nftx.io");
+      case "blur":
+        return sources.getOrInsert("blur.io");
+      case "manifold":
+        return sources.getOrInsert("manifold.xyz");
+
       case "mint": {
         if (address && mintsSources.has(address)) {
           return sources.getOrInsert(mintsSources.get(address)!);
-        } else {
-          return null;
         }
       }
-      default:
-        // For all other order kinds we cannot default the source
-        return null;
     }
   } catch {
-    // Return the null source in case of any errors
-    return null;
+    // Skip on any errors
   }
+
+  // In case nothing matched, return `undefined` by default
 };
 
 // Support for filling listings
-export const generateListingDetails = (
+export const generateListingDetailsV5 = (
   order: {
+    id: string;
     kind: OrderKind;
     currency: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,7 +137,7 @@ export const generateListingDetails = (
     tokenId: string;
     amount?: number;
   }
-): ListingDetails => {
+): SdkTypesV5.ListingDetails => {
   const common = {
     contractKind: token.kind,
     contract: token.contract,
@@ -127,6 +147,14 @@ export const generateListingDetails = (
   };
 
   switch (order.kind) {
+    case "cryptopunks": {
+      return {
+        kind: "cryptopunks",
+        ...common,
+        order: new Sdk.CryptoPunks.Order(config.chainId, order.rawData),
+      };
+    }
+
     case "foundation": {
       return {
         kind: "foundation",
@@ -140,15 +168,6 @@ export const generateListingDetails = (
         kind: "looks-rare",
         ...common,
         order: new Sdk.LooksRare.Order(config.chainId, order.rawData),
-      };
-    }
-
-    case "opendao-erc721":
-    case "opendao-erc1155": {
-      return {
-        kind: "opendao",
-        ...common,
-        order: new Sdk.OpenDao.Order(config.chainId, order.rawData),
       };
     }
 
@@ -170,10 +189,49 @@ export const generateListingDetails = (
     }
 
     case "seaport": {
+      if (order.rawData) {
+        return {
+          kind: "seaport",
+          ...common,
+          order: new Sdk.Seaport.Order(config.chainId, order.rawData),
+        };
+      } else {
+        // Sorry for all the below `any` types
+        return {
+          // eslint-disable-next-line
+          kind: "seaport-partial" as any,
+          ...common,
+          order: {
+            contract: token.contract,
+            tokenId: token.tokenId,
+            id: order.id,
+            // eslint-disable-next-line
+          } as any,
+        };
+      }
+    }
+
+    case "zora-v3": {
       return {
-        kind: "seaport",
+        kind: "zora",
         ...common,
-        order: new Sdk.Seaport.Order(config.chainId, order.rawData),
+        order: new Sdk.Zora.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "universe": {
+      return {
+        kind: "universe",
+        ...common,
+        order: new Sdk.Universe.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "rarible": {
+      return {
+        kind: "rarible",
+        ...common,
+        order: new Sdk.Rarible.Order(config.chainId, order.rawData),
       };
     }
 
@@ -184,8 +242,9 @@ export const generateListingDetails = (
 };
 
 // Support for filling bids
-export const generateBidDetails = async (
+export const generateBidDetailsV5 = async (
   order: {
+    id: string;
     kind: OrderKind;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rawData: any;
@@ -194,63 +253,70 @@ export const generateBidDetails = async (
     kind: "erc721" | "erc1155";
     contract: string;
     tokenId: string;
+    amount?: number;
   }
-): Promise<BidDetails> => {
+): Promise<SdkTypesV5.BidDetails> => {
   const common = {
     contractKind: token.kind,
     contract: token.contract,
     tokenId: token.tokenId,
+    amount: token.amount ?? 1,
   };
 
   switch (order.kind) {
     case "seaport": {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const extraArgs: any = {};
+      if (order.rawData) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const extraArgs: any = {};
 
-      const sdkOrder = new Sdk.Seaport.Order(config.chainId, order.rawData);
-      if (sdkOrder.params.kind?.includes("token-list")) {
-        // When filling a "token-list" order, we also need to pass in the
-        // full list of tokens the order was made on (in order to be able
-        // to generate a valid merkle proof)
-        const tokens = await redb.manyOrNone(
-          `
-            SELECT
-              token_sets_tokens.token_id
-            FROM token_sets_tokens
-            WHERE token_sets_tokens.token_set_id = (
+        const sdkOrder = new Sdk.Seaport.Order(config.chainId, order.rawData);
+        if (sdkOrder.params.kind?.includes("token-list")) {
+          // When filling a "token-list" order, we also need to pass in the
+          // full list of tokens the order was made on (in order to be able
+          // to generate a valid merkle proof)
+          const tokens = await redb.manyOrNone(
+            `
               SELECT
-                orders.token_set_id
-              FROM orders
-              WHERE orders.id = $/id/
-            )
-          `,
-          { id: sdkOrder.hash() }
-        );
-        extraArgs.tokenIds = tokens.map(({ token_id }) => token_id);
-      }
+                token_sets_tokens.token_id
+              FROM token_sets_tokens
+              WHERE token_sets_tokens.token_set_id = (
+                SELECT
+                  orders.token_set_id
+                FROM orders
+                WHERE orders.id = $/id/
+              )
+            `,
+            { id: sdkOrder.hash() }
+          );
+          extraArgs.tokenIds = tokens.map(({ token_id }) => token_id);
+        }
 
-      return {
-        kind: "seaport",
-        ...common,
-        extraArgs,
-        order: sdkOrder,
-      };
+        return {
+          kind: "seaport",
+          ...common,
+          extraArgs,
+          order: sdkOrder,
+        };
+      } else {
+        // Sorry for all the below `any` types
+        return {
+          // eslint-disable-next-line
+          kind: "seaport-partial" as any,
+          ...common,
+          order: {
+            contract: token.contract,
+            tokenId: token.tokenId,
+            id: order.id,
+            // eslint-disable-next-line
+          } as any,
+        };
+      }
     }
 
     case "looks-rare": {
       const sdkOrder = new Sdk.LooksRare.Order(config.chainId, order.rawData);
       return {
         kind: "looks-rare",
-        ...common,
-        order: sdkOrder,
-      };
-    }
-
-    case "opendao-erc721":
-    case "opendao-erc1155": {
-      const sdkOrder = new Sdk.OpenDao.Order(config.chainId, order.rawData);
-      return {
-        kind: "opendao",
         ...common,
         order: sdkOrder,
       };
@@ -270,6 +336,327 @@ export const generateBidDetails = async (
       const sdkOrder = new Sdk.X2Y2.Order(config.chainId, order.rawData);
       return {
         kind: "x2y2",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "sudoswap": {
+      const sdkOrder = new Sdk.Sudoswap.Order(config.chainId, order.rawData);
+      return {
+        kind: "sudoswap",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "universe": {
+      const sdkOrder = new Sdk.Universe.Order(config.chainId, order.rawData);
+      return {
+        kind: "universe",
+        ...common,
+        order: sdkOrder,
+        extraArgs: {
+          amount: sdkOrder.params.take.value,
+        },
+      };
+    }
+
+    case "rarible": {
+      const sdkOrder = new Sdk.Rarible.Order(config.chainId, order.rawData);
+      return {
+        kind: "rarible",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    default: {
+      throw new Error("Unsupported order kind");
+    }
+  }
+};
+
+// Support for filling listings
+export const generateListingDetailsV6 = (
+  order: {
+    id: string;
+    kind: OrderKind;
+    currency: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rawData: any;
+    fees?: Sdk.RouterV6.Types.Fee[];
+  },
+  token: {
+    kind: "erc721" | "erc1155";
+    contract: string;
+    tokenId: string;
+    amount?: number;
+  }
+): SdkTypesV6.ListingDetails => {
+  const common = {
+    contractKind: token.kind,
+    contract: token.contract,
+    tokenId: token.tokenId,
+    currency: order.currency,
+    amount: token.amount ?? 1,
+    fees: order.fees ?? [],
+  };
+
+  switch (order.kind) {
+    case "cryptopunks": {
+      return {
+        kind: "cryptopunks",
+        ...common,
+        order: new Sdk.CryptoPunks.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "foundation": {
+      return {
+        kind: "foundation",
+        ...common,
+        order: new Sdk.Foundation.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "looks-rare": {
+      return {
+        kind: "looks-rare",
+        ...common,
+        order: new Sdk.LooksRare.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "x2y2": {
+      return {
+        kind: "x2y2",
+        ...common,
+        order: new Sdk.X2Y2.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "zeroex-v4-erc721":
+    case "zeroex-v4-erc1155": {
+      return {
+        kind: "zeroex-v4",
+        ...common,
+        order: new Sdk.ZeroExV4.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "seaport": {
+      if (order.rawData) {
+        return {
+          kind: "seaport",
+          ...common,
+          order: new Sdk.Seaport.Order(config.chainId, order.rawData),
+        };
+      } else {
+        // Sorry for all the below `any` types
+        return {
+          // eslint-disable-next-line
+          kind: "seaport-partial" as any,
+          ...common,
+          order: {
+            contract: token.contract,
+            tokenId: token.tokenId,
+            id: order.id,
+            // eslint-disable-next-line
+          } as any,
+        };
+      }
+    }
+
+    case "zora-v3": {
+      return {
+        kind: "zora",
+        ...common,
+        order: new Sdk.Zora.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "universe": {
+      return {
+        kind: "universe",
+        ...common,
+        order: new Sdk.Universe.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "rarible": {
+      return {
+        kind: "rarible",
+        ...common,
+        order: new Sdk.Rarible.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "sudoswap": {
+      return {
+        kind: "sudoswap",
+        ...common,
+        order: new Sdk.Sudoswap.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "manifold": {
+      return {
+        kind: "manifold",
+        ...common,
+        order: new Sdk.Manifold.Order(config.chainId, order.rawData),
+      };
+    }
+
+    default: {
+      throw new Error("Unsupported order kind");
+    }
+  }
+};
+
+// Support for filling bids
+export const generateBidDetailsV6 = async (
+  order: {
+    id: string;
+    kind: OrderKind;
+    unitPrice: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rawData: any;
+    fees?: Sdk.RouterV6.Types.Fee[];
+  },
+  token: {
+    kind: "erc721" | "erc1155";
+    contract: string;
+    tokenId: string;
+    amount?: number;
+  }
+): Promise<SdkTypesV6.BidDetails> => {
+  const common = {
+    contractKind: token.kind,
+    contract: token.contract,
+    tokenId: token.tokenId,
+    amount: token.amount ?? 1,
+    fees: order.fees ?? [],
+  };
+
+  switch (order.kind) {
+    case "seaport": {
+      if (order.rawData) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const extraArgs: any = {};
+
+        const sdkOrder = new Sdk.Seaport.Order(config.chainId, order.rawData);
+        if (sdkOrder.params.kind?.includes("token-list")) {
+          // When filling a "token-list" order, we also need to pass in the
+          // full list of tokens the order was made on (in order to be able
+          // to generate a valid merkle proof)
+          const tokens = await redb.manyOrNone(
+            `
+              SELECT
+                token_sets_tokens.token_id
+              FROM token_sets_tokens
+              WHERE token_sets_tokens.token_set_id = (
+                SELECT
+                  orders.token_set_id
+                FROM orders
+                WHERE orders.id = $/id/
+              )
+            `,
+            { id: sdkOrder.hash() }
+          );
+          extraArgs.tokenIds = tokens.map(({ token_id }) => token_id);
+        }
+
+        return {
+          kind: "seaport",
+          ...common,
+          extraArgs,
+          order: sdkOrder,
+        };
+      } else {
+        // Sorry for all the below `any` types
+        return {
+          // eslint-disable-next-line
+          kind: "seaport-partial" as any,
+          ...common,
+          order: {
+            contract: token.contract,
+            tokenId: token.tokenId,
+            id: order.id,
+            unitPrice: order.unitPrice,
+            // eslint-disable-next-line
+          } as any,
+        };
+      }
+    }
+
+    case "looks-rare": {
+      const sdkOrder = new Sdk.LooksRare.Order(config.chainId, order.rawData);
+      return {
+        kind: "looks-rare",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "zeroex-v4-erc721":
+    case "zeroex-v4-erc1155": {
+      const sdkOrder = new Sdk.ZeroExV4.Order(config.chainId, order.rawData);
+      return {
+        kind: "zeroex-v4",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "x2y2": {
+      const sdkOrder = new Sdk.X2Y2.Order(config.chainId, order.rawData);
+      return {
+        kind: "x2y2",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "sudoswap": {
+      const sdkOrder = new Sdk.Sudoswap.Order(config.chainId, order.rawData);
+      return {
+        kind: "sudoswap",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "universe": {
+      const sdkOrder = new Sdk.Universe.Order(config.chainId, order.rawData);
+      return {
+        kind: "universe",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "rarible": {
+      return {
+        kind: "rarible",
+        ...common,
+        order: new Sdk.Rarible.Order(config.chainId, order.rawData),
+      };
+    }
+
+    case "forward": {
+      const sdkOrder = new Sdk.Forward.Order(config.chainId, order.rawData);
+      return {
+        kind: "forward",
+        ...common,
+        order: sdkOrder,
+      };
+    }
+
+    case "blur": {
+      const sdkOrder = new Sdk.Blur.Order(config.chainId, order.rawData);
+      return {
+        kind: "blur",
         ...common,
         order: sdkOrder,
       };

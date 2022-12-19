@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { Job, Queue, QueueScheduler, Worker } from "bullmq";
+import _ from "lodash";
 
 import { PgPromiseQuery, idb, pgp } from "@/common/db";
 import { logger } from "@/common/logger";
@@ -8,8 +9,10 @@ import { redis } from "@/common/redis";
 import { toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import { getNetworkSettings } from "@/config/network";
+import * as collectionRecalcFloorAsk from "@/jobs/collection-updates/recalc-floor-queue";
 import * as metadataIndexFetch from "@/jobs/metadata-index/fetch-queue";
 import MetadataApi from "@/utils/metadata-api";
+import * as royalties from "@/utils/royalties";
 
 const QUEUE_NAME = "token-updates-fetch-collection-metadata-queue";
 
@@ -21,7 +24,7 @@ export const queue = new Queue(QUEUE_NAME, {
       type: "exponential",
       delay: 20000,
     },
-    removeOnComplete: 10000,
+    removeOnComplete: 10,
     removeOnFail: 10000,
     timeout: 60000,
   },
@@ -33,19 +36,26 @@ if (config.doBackgroundWork) {
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {
-      const { contract, tokenId, mintedTimestamp } = job.data as FetchCollectionMetadataInfo;
+      const { contract, tokenId, mintedTimestamp, newCollection } =
+        job.data as FetchCollectionMetadataInfo;
 
       try {
-        const collection = await MetadataApi.getCollectionMetadata(contract, tokenId, {
+        // Fetch collection metadata
+        const collection = await MetadataApi.getCollectionMetadata(contract, tokenId, "", {
           allowFallback: true,
         });
 
-        const tokenIdRange = collection.tokenIdRange
-          ? `numrange(${collection.tokenIdRange[0]}, ${collection.tokenIdRange[1]}, '[]')`
-          : `'(,)'::numrange`;
+        let tokenIdRange: string | null = null;
+        if (collection.tokenIdRange) {
+          tokenIdRange = `numrange(${collection.tokenIdRange[0]}, ${collection.tokenIdRange[1]}, '[]')`;
+        } else if (collection.id === contract) {
+          tokenIdRange = `'(,)'::numrange`;
+        }
+
+        // For covering the case where the token id range is null
+        const tokenIdRangeParam = tokenIdRange ? "$/tokenIdRange:raw/" : "$/tokenIdRange/";
 
         const queries: PgPromiseQuery[] = [];
-
         queries.push({
           query: `
               INSERT INTO "collections" (
@@ -54,7 +64,6 @@ if (config.doBackgroundWork) {
                 "name",
                 "community",
                 "metadata",
-                "royalties",
                 "contract",
                 "token_id_range",
                 "token_set_id",
@@ -65,12 +74,11 @@ if (config.doBackgroundWork) {
                 $/name/,
                 $/community/,
                 $/metadata:json/,
-                $/royalties:json/,
                 $/contract/,
-                $/tokenIdRange:raw/,
+                ${tokenIdRangeParam},
                 $/tokenSetId/,
                 $/mintedTimestamp/
-              ) ON CONFLICT DO NOTHING
+              ) ON CONFLICT DO NOTHING;
             `,
           values: {
             id: collection.id,
@@ -78,13 +86,17 @@ if (config.doBackgroundWork) {
             name: collection.name,
             community: collection.community,
             metadata: collection.metadata,
-            royalties: collection.royalties,
             contract: toBuffer(collection.contract),
             tokenIdRange,
             tokenSetId: collection.tokenSetId,
             mintedTimestamp,
           },
         });
+
+        let tokenFilter = `AND "token_id" <@ ${tokenIdRangeParam}`;
+        if (_.isNull(tokenIdRange)) {
+          tokenFilter = `AND "token_id" = $/tokenId/`;
+        }
 
         // Since this is the first time we run into this collection,
         // we update all tokens that match its token definition
@@ -95,7 +107,7 @@ if (config.doBackgroundWork) {
                   "collection_id" = $/collection/,
                   "updated_at" = now()
                 WHERE "contract" = $/contract/
-                  AND "token_id" <@ $/tokenIdRange:raw/
+                ${tokenFilter}
                 RETURNING 1
               )
               UPDATE "collections" SET
@@ -106,11 +118,18 @@ if (config.doBackgroundWork) {
           values: {
             contract: toBuffer(collection.contract),
             tokenIdRange,
+            tokenId,
             collection: collection.id,
           },
         });
 
+        // Write the collection to the database
         await idb.none(pgp.helpers.concat(queries));
+
+        // If this is a new collection, recalculate the its floor price
+        if (collection?.id && newCollection) {
+          await collectionRecalcFloorAsk.addToQueue(collection.id);
+        }
 
         if (collection?.id && !config.disableRealtimeMetadataRefresh) {
           await metadataIndexFetch.addToQueue(
@@ -118,7 +137,7 @@ if (config.doBackgroundWork) {
               {
                 kind: "single-token",
                 data: {
-                  method: config.metadataIndexingMethod,
+                  method: metadataIndexFetch.getIndexingMethod(collection.community),
                   contract,
                   tokenId,
                   collection: collection.id,
@@ -129,6 +148,14 @@ if (config.doBackgroundWork) {
             getNetworkSettings().metadataMintDelay
           );
         }
+
+        // Refresh all royalty specs and the default royalties
+        await royalties.refreshAllRoyaltySpecs(
+          collection.id,
+          (collection.royalties ?? []) as royalties.Royalty[],
+          (collection.openseaRoyalties ?? []) as royalties.Royalty[]
+        );
+        await royalties.refreshDefaulRoyalties(collection.id);
       } catch (error) {
         logger.error(
           QUEUE_NAME,
@@ -148,15 +175,18 @@ export type FetchCollectionMetadataInfo = {
   contract: string;
   tokenId: string;
   mintedTimestamp: number;
+  newCollection?: boolean;
 };
 
-export const addToQueue = async (infos: FetchCollectionMetadataInfo[]) => {
+export const addToQueue = async (infos: FetchCollectionMetadataInfo[], jobId = "") => {
   await queue.addBulk(
     infos.map((info) => {
-      // For contracts with multiple collections, we have to include the token in order the fetch the right collection
-      const jobId = getNetworkSettings().multiCollectionContracts.includes(info.contract)
-        ? `${info.contract}-${info.tokenId}`
-        : info.contract;
+      if (jobId === "") {
+        // For contracts with multiple collections, we have to include the token in order the fetch the right collection
+        jobId = getNetworkSettings().multiCollectionContracts.includes(info.contract)
+          ? `${info.contract}-${info.tokenId}`
+          : info.contract;
+      }
 
       return {
         name: jobId,

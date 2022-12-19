@@ -27,27 +27,26 @@ if (config.doBackgroundWork) {
       const { sourceDomain } = job.data;
       let url = sourceDomain;
       let iconUrl;
-      let titleText;
 
       if (!_.startsWith(url, "http")) {
         url = `https://${url}`;
       }
 
       // Get the domain HTML
-      const response = await axios.get(url);
+      const response = await axios.get(url, {
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:89.0) Gecko/20100101 Firefox/89.0",
+        },
+      });
       const html = parse(response.data);
 
       // First get the custom reservoir title tag
       const reservoirTitle = html.querySelector("meta[property='reservoir:title']");
 
+      let titleText = sourceDomain; // Default name for source is the domain
       if (reservoirTitle) {
         titleText = reservoirTitle.getAttribute("content");
-      } else {
-        // Get the domain default title
-        const title = html.querySelector("title");
-        if (title) {
-          titleText = title.text;
-        }
       }
 
       // First get the custom reservoir icon tag
@@ -68,6 +67,8 @@ if (config.doBackgroundWork) {
         iconUrl = `https://${_.trimStart(iconUrl, "//")}`;
       } else if (iconUrl && _.startsWith(iconUrl, "/")) {
         iconUrl = `${url}${iconUrl}`;
+      } else if (iconUrl && !_.startsWith(iconUrl, "http")) {
+        iconUrl = `${url}/${iconUrl}`;
       }
 
       const tokenUrlMainnet = getTokenUrl(html, url, "mainnet");

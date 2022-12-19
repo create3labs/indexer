@@ -1,4 +1,4 @@
-import { redb } from "@/common/db";
+import { ridb } from "@/common/db";
 import { Sources } from "@/models/sources";
 import { fromBuffer } from "@/common/utils";
 import { BaseDataSource } from "@/jobs/data-export/data-sources/index";
@@ -36,7 +36,7 @@ export class CollectionFloorAskEventsDataSource extends BaseDataSource {
             LIMIT $/limit/;
       `;
 
-    const result = await redb.manyOrNone(query, {
+    const result = await ridb.manyOrNone(query, {
       id: cursor?.id,
       limit,
     });
@@ -48,7 +48,7 @@ export class CollectionFloorAskEventsDataSource extends BaseDataSource {
         id: r.id,
         kind: r.kind,
         collection_id: r.collection_id,
-        contract: fromBuffer(r.contract),
+        contract: r.contract ? fromBuffer(r.contract) : null,
         token_id: r.token_id,
         order_id: r.order_id,
         maker: r.maker ? fromBuffer(r.maker) : null,

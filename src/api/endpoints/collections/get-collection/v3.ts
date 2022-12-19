@@ -4,10 +4,12 @@ import _ from "lodash";
 import { Request, RouteOptions } from "@hapi/hapi";
 import Joi from "joi";
 
+import { config } from "@/config/index";
 import { redb } from "@/common/db";
 import { logger } from "@/common/logger";
 import { formatEth, fromBuffer } from "@/common/utils";
 import { Sources } from "@/models/sources";
+import { Assets } from "@/utils/assets";
 
 const version = "v3";
 
@@ -266,9 +268,10 @@ export const getCollectionV3Options: RouteOptions = {
               metadata: {
                 ...r.metadata,
                 imageUrl:
-                  r.metadata?.imageUrl || (r.sample_images?.length ? r.sample_images[0] : null),
+                  Assets.getLocalAssetsLink(r.metadata?.imageUrl) ||
+                  (r.sample_images?.length ? Assets.getLocalAssetsLink(r.sample_images[0]) : null),
               },
-              sampleImages: r.sample_images || [],
+              sampleImages: Assets.getLocalAssetsLink(r.sample_images) || [],
               tokenCount: String(r.token_count),
               onSaleCount: String(r.on_sale_count),
               primaryContract: fromBuffer(r.contract),
@@ -291,7 +294,7 @@ export const getCollectionV3Options: RouteOptions = {
                     : null,
                   tokenId: r.floor_sell_token_id,
                   name: r.floor_sell_token_name,
-                  image: r.floor_sell_token_image,
+                  image: Assets.getLocalAssetsLink(r.floor_sell_token_image),
                 },
               },
               topBid: query.includeTopBid
@@ -336,7 +339,7 @@ export const getCollectionV3Options: RouteOptions = {
                   ? Number(r.floor_sell_value) / Number(r.day30_floor_sell_value)
                   : null,
               },
-              collectionBidSupported: Number(r.token_count) <= 30000,
+              collectionBidSupported: Number(r.token_count) <= config.maxTokenSetSize,
               ownerCount: Number(r.ownerCount),
               attributes: _.map(_.sortBy(r.attributes, ["rank", "key"]), (attribute) => ({
                 key: attribute.key,

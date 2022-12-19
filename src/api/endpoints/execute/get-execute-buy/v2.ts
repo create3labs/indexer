@@ -4,7 +4,7 @@ import { AddressZero } from "@ethersproject/constants";
 import * as Boom from "@hapi/boom";
 import { Request, RouteOptions } from "@hapi/hapi";
 import * as Sdk from "@0xlol/sdk";
-import { ListingDetails } from "@0xlol/sdk/dist/router/types";
+import { ListingDetails } from "@0xlol/sdk/dist/router/v5/types";
 import Joi from "joi";
 
 import { redb } from "@/common/db";
@@ -13,7 +13,7 @@ import { baseProvider } from "@/common/provider";
 import { bn, formatEth, fromBuffer, regex, toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import { Sources } from "@/models/sources";
-import { generateListingDetails } from "@/orderbook/orders";
+import { generateListingDetailsV5 } from "@/orderbook/orders";
 
 const version = "v2";
 
@@ -191,7 +191,7 @@ export const getExecuteBuyV2Options: RouteOptions = {
             contract,
             tokenId,
             quantity: 1,
-            source: sources.get(source_id_int)?.name,
+            source: sources.get(source_id_int)?.name ?? null,
             quote: formatEth(bn(price).add(bn(price).mul(query.referrerFeeBps).div(10000))),
           });
           if (query.onlyQuote) {
@@ -200,8 +200,9 @@ export const getExecuteBuyV2Options: RouteOptions = {
           }
 
           listingDetails.push(
-            generateListingDetails(
+            generateListingDetailsV5(
               {
+                id,
                 kind,
                 currency: fromBuffer(currency),
                 rawData: raw_data,
@@ -278,7 +279,7 @@ export const getExecuteBuyV2Options: RouteOptions = {
               contract,
               tokenId,
               quantity: quantityFilled,
-              source: sources.get(source_id_int)?.name,
+              source: sources.get(source_id_int)?.name ?? null,
               quote: formatEth(totalPrice.add(totalPrice.mul(query.referrerFeeBps).div(10000))),
             });
             if (query.onlyQuote) {
@@ -287,8 +288,9 @@ export const getExecuteBuyV2Options: RouteOptions = {
             }
 
             listingDetails.push(
-              generateListingDetails(
+              generateListingDetailsV5(
                 {
+                  id,
                   kind,
                   currency: fromBuffer(currency),
                   rawData: raw_data,
@@ -325,9 +327,11 @@ export const getExecuteBuyV2Options: RouteOptions = {
         }
       }
 
-      const router = new Sdk.Router.Router(config.chainId, baseProvider);
+      const router = new Sdk.RouterV5.Router(config.chainId, baseProvider, {
+        x2y2ApiKey: config.x2y2ApiKey,
+      });
       const tx = await router.fillListingsTx(listingDetails, query.taker, {
-        referrer: query.source,
+        source: query.source,
         fee: {
           recipient: query.referrer,
           bps: query.referrerFeeBps,

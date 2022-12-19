@@ -1,4 +1,4 @@
-import { redb } from "@/common/db";
+import { ridb } from "@/common/db";
 import { fromBuffer } from "@/common/utils";
 import { BaseDataSource } from "@/jobs/data-export/data-sources/index";
 
@@ -18,6 +18,7 @@ export class CollectionsDataSource extends BaseDataSource {
           (collections.metadata ->> 'description')::TEXT AS "description",
           collections.contract,
           collections.token_count,
+          collections.community,
           collections.floor_sell_value,
           collections.day1_volume,
           collections.day7_volume,
@@ -41,7 +42,7 @@ export class CollectionsDataSource extends BaseDataSource {
         LIMIT $/limit/;  
       `;
 
-    const result = await redb.manyOrNone(query, {
+    const result = await ridb.manyOrNone(query, {
       id: cursor?.id,
       updatedAt: cursor?.updatedAt,
       limit,
@@ -55,6 +56,7 @@ export class CollectionsDataSource extends BaseDataSource {
         description: r.description,
         token_count: String(r.token_count),
         contract: fromBuffer(r.contract),
+        community: r.community,
         day1_rank: r.day1_rank,
         day7_rank: r.day7_rank,
         day30_rank: r.day30_rank,
@@ -67,18 +69,18 @@ export class CollectionsDataSource extends BaseDataSource {
         day7_volume_change: r.day7_volume_change,
         day30_volume_change: r.day30_volume_change,
         floor_ask_value: r.floor_sell_value ? r.floor_sell_value.toString() : null,
-        day1_floor_ask_value: r.day1_floor_sell_value ? r.day1_floor_sell_value.toString() : null,
-        day7_floor_ask_value: r.day7_floor_sell_value ? r.day7_floor_sell_value.toString() : null,
-        day30_floor_ask_value: r.day30_floor_sell_value
+        day1_floor_sale_value: r.day1_floor_sell_value ? r.day1_floor_sell_value.toString() : null,
+        day7_floor_sale_value: r.day7_floor_sell_value ? r.day7_floor_sell_value.toString() : null,
+        day30_floor_sale_value: r.day30_floor_sell_value
           ? r.day30_floor_sell_value.toString()
           : null,
-        day1_floor_ask_change: r.day1_floor_sell_value
+        day1_floor_sale_change: r.day1_floor_sell_value
           ? Number(r.floor_sell_value) / Number(r.day1_floor_sell_value)
           : null,
-        day7_floor_ask_change: r.day7_floor_sell_value
+        day7_floor_sale_change: r.day7_floor_sell_value
           ? Number(r.floor_sell_value) / Number(r.day7_floor_sell_value)
           : null,
-        day30_floor_ask_change: r.day30_floor_sell_value
+        day30_floor_sale_change: r.day30_floor_sell_value
           ? Number(r.floor_sell_value) / Number(r.day30_floor_sell_value)
           : null,
         created_at: new Date(r.created_at).toISOString(),

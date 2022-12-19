@@ -1,11 +1,12 @@
 import { Job, Queue, QueueScheduler, Worker } from "bullmq";
 
 import { logger } from "@/common/logger";
-import { BullMQBulkJob, redis } from "@/common/redis";
+import { BullMQBulkJob, getMemUsage, redis } from "@/common/redis";
 import { config } from "@/config/index";
 import { getNetworkSettings } from "@/config/network";
 import { EventDataKind } from "@/events-sync/data";
 import { syncEvents } from "@/events-sync/index";
+import _ from "lodash";
 
 const QUEUE_NAME = "events-sync-backfill";
 
@@ -29,18 +30,35 @@ if (config.doBackgroundWork && config.doEventsSyncBackfill) {
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {
-      const { fromBlock, toBlock, backfill, eventDataKinds, skipNonFillWrites } = job.data;
+      const { fromBlock, toBlock, backfill, syncDetails } = job.data;
+
+      // Check if redis reaching max memory usage
+      const maxMemUsage = 1024 * 1000 * 1000 * config.redisMaxMemoryGB; // Max size in GB
+      const currentMemUsage = await getMemUsage();
+      if (currentMemUsage > maxMemUsage) {
+        const delay = _.random(1000 * 60, 1000 * 60 * 5);
+        logger.warn(
+          QUEUE_NAME,
+          `Max memory reached ${_.round(currentMemUsage / (1024 * 1000 * 1000), 2)} GB, delay job ${
+            job.id
+          } for ${_.round(delay / 1000)}s`
+        );
+
+        job.opts.attempts = _.toInteger(job.opts.attempts) + 2;
+        await addToQueue(fromBlock, toBlock, _.merge(job.opts, { delay }));
+        return;
+      }
 
       try {
         logger.info(QUEUE_NAME, `Events backfill syncing block range [${fromBlock}, ${toBlock}]`);
 
-        await syncEvents(fromBlock, toBlock, { backfill, eventDataKinds, skipNonFillWrites });
+        await syncEvents(fromBlock, toBlock, { backfill, syncDetails });
       } catch (error) {
         logger.error(QUEUE_NAME, `Events backfill syncing failed: ${error}`);
         throw error;
       }
     },
-    { connection: redis.duplicate(), concurrency: 10 }
+    { connection: redis.duplicate(), concurrency: 15 }
   );
   worker.on("error", (error) => {
     logger.error(QUEUE_NAME, `Worker errored: ${error}`);
@@ -51,16 +69,25 @@ export const addToQueue = async (
   fromBlock: number,
   toBlock: number,
   options?: {
+    attempts?: number;
+    delay?: number;
     blocksPerBatch?: number;
     prioritized?: boolean;
     backfill?: boolean;
-    skipNonFillWrites?: boolean;
-    eventDataKinds?: EventDataKind[];
+    syncDetails?:
+      | {
+          method: "events";
+          events: EventDataKind[];
+        }
+      | {
+          method: "address";
+          address: string;
+        };
   }
 ) => {
   // Syncing is done in several batches since the requested block
   // range might result in lots of events which could potentially
-  // not fit within a single provider response.
+  // not fit within a single provider response
   const blocksPerBatch = options?.blocksPerBatch ?? getNetworkSettings().backfillBlockBatchSize;
 
   // Important backfill processes should be prioritized
@@ -70,20 +97,26 @@ export const addToQueue = async (
   const jobs: BullMQBulkJob[] = [];
   for (let to = toBlock; to >= fromBlock; to -= blocksPerBatch) {
     const from = Math.max(fromBlock, to - blocksPerBatch + 1);
+    const jobId = options?.attempts ? `${from}-${to}-${options.attempts}` : `${from}-${to}`;
+
     jobs.push({
       name: `${from}-${to}`,
       data: {
         fromBlock: from,
         toBlock: to,
         backfill: options?.backfill,
-        skipNonFillWrites: options?.skipNonFillWrites,
-        eventDataKinds: options?.eventDataKinds,
+        syncDetails: options?.syncDetails,
       },
       opts: {
         priority: prioritized ? 1 : undefined,
+        jobId,
+        delay: options?.delay,
+        attempts: options?.attempts,
       },
     });
   }
 
-  await queue.addBulk(jobs);
+  for (const chunkedJobs of _.chunk(jobs, 1000)) {
+    await queue.addBulk(chunkedJobs);
+  }
 };

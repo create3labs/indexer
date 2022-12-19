@@ -15,6 +15,7 @@ import {
   splitContinuation,
   toBuffer,
 } from "@/common/utils";
+import { Assets } from "@/utils/assets";
 
 const version = "v4";
 
@@ -412,17 +413,18 @@ export const getTokensV4Options: RouteOptions = {
       }
 
       const sources = await Sources.getInstance();
+
       const result = rawResult.map((r) => {
         return {
           contract: fromBuffer(r.contract),
           tokenId: r.token_id,
           name: r.name,
-          image: r.image,
+          image: Assets.getLocalAssetsLink(r.image),
           media: r.media,
           collection: {
             id: r.collection_id,
             name: r.collection_name,
-            image: r.collection_image,
+            image: Assets.getLocalAssetsLink(r.collection_image),
             slug: r.slug,
           },
           source: r.floor_sell_value

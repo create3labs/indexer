@@ -9,6 +9,7 @@ import {
   UserActivitiesEntityInsertParams,
   UserActivitiesEntityParams,
 } from "@/models/user-activities/user-activities-entity";
+import { Orders } from "@/utils/orders";
 
 export class UserActivities {
   public static async addActivities(activities: UserActivitiesEntityInsertParams[]) {
@@ -23,6 +24,7 @@ export class UserActivities {
         "contract",
         "collection_id",
         "token_id",
+        "order_id",
         "address",
         "from_address",
         "to_address",
@@ -41,12 +43,13 @@ export class UserActivities {
       contract: toBuffer(activity.contract),
       collection_id: activity.collectionId,
       token_id: activity.tokenId,
+      order_id: activity.orderId,
       address: toBuffer(activity.address),
       from_address: toBuffer(activity.fromAddress),
       to_address: activity.toAddress ? toBuffer(activity.toAddress) : null,
       price: activity.price,
       amount: activity.amount,
-      block_hash: activity.blockHash,
+      block_hash: activity.blockHash ? toBuffer(activity.blockHash) : null,
       event_timestamp: activity.eventTimestamp,
       metadata: activity.metadata,
     }));
@@ -58,25 +61,166 @@ export class UserActivities {
 
   public static async getActivities(
     users: string[],
+    collections: string[] = [],
+    community = "",
     createdBefore: null | string = null,
     types: string[] = [],
-    limit = 20
+    limit = 20,
+    sortBy = "eventTimestamp",
+    includeMetadata = true,
+    includeCriteria = false
   ) {
+    const sortByColumn = sortBy == "eventTimestamp" ? "event_timestamp" : "created_at";
     let continuation = "";
     let typesFilter = "";
+    let metadataQuery = "";
+    let collectionFilter = "";
+    let communityFilter = "";
 
     if (!_.isNull(createdBefore)) {
-      continuation = `AND event_timestamp < $/createdBefore/`;
+      continuation = `AND ${sortByColumn} < $/createdBefore/`;
     }
 
     if (!_.isEmpty(types)) {
       typesFilter = `AND type IN ('$/types:raw/')`;
     }
 
+    if (!_.isEmpty(collections)) {
+      if (Array.isArray(collections)) {
+        collectionFilter = `AND collections.id IN ($/collections:csv/)`;
+      } else {
+        collectionFilter = `AND collections.id = $/collections/`;
+      }
+    }
+
+    if (community) {
+      communityFilter = "AND collections.community = $/community/";
+    }
+
+    if (includeMetadata) {
+      let orderCriteriaBuildQuery = "json_build_object()";
+      let orderMetadataBuildQuery = "json_build_object()";
+
+      if (includeCriteria) {
+        orderCriteriaBuildQuery = Orders.buildCriteriaQuery(
+          "orders",
+          "token_set_id",
+          includeMetadata
+        );
+      } else {
+        orderMetadataBuildQuery = `
+          CASE
+            WHEN orders.token_set_id LIKE 'token:%' THEN
+              (SELECT
+                json_build_object(
+                  'kind', 'token',
+                  'data', json_build_object(
+                    'collectionName', collections.name,
+                    'tokenName', tokens.name,
+                    'image', tokens.image
+                  )
+                )
+              FROM tokens
+              JOIN collections
+                ON tokens.collection_id = collections.id
+              WHERE tokens.contract = decode(substring(split_part(orders.token_set_id, ':', 2) from 3), 'hex')
+                AND tokens.token_id = (split_part(orders.token_set_id, ':', 3)::NUMERIC(78, 0)))
+
+            WHEN orders.token_set_id LIKE 'contract:%' THEN
+              (SELECT
+                json_build_object(
+                  'kind', 'collection',
+                  'data', json_build_object(
+                    'collectionName', collections.name,
+                    'image', (collections.metadata ->> 'imageUrl')::TEXT
+                  )
+                )
+              FROM collections
+              WHERE collections.id = substring(orders.token_set_id from 10))
+
+            WHEN orders.token_set_id LIKE 'range:%' THEN
+              (SELECT
+                json_build_object(
+                  'kind', 'collection',
+                  'data', json_build_object(
+                    'collectionName', collections.name,
+                    'image', (collections.metadata ->> 'imageUrl')::TEXT
+                  )
+                )
+              FROM collections
+              WHERE collections.id = substring(orders.token_set_id from 7))
+
+            WHEN orders.token_set_id LIKE 'list:%' THEN
+              (SELECT
+                CASE
+                  WHEN token_sets.attribute_id IS NULL THEN
+                    (SELECT
+                      json_build_object(
+                        'kind', 'collection',
+                        'data', json_build_object(
+                          'collectionName', collections.name,
+                          'image', (collections.metadata ->> 'imageUrl')::TEXT
+                        )
+                      )
+                    FROM collections
+                    WHERE token_sets.collection_id = collections.id)
+                  ELSE
+                    (SELECT
+                      json_build_object(
+                        'kind', 'attribute',
+                        'data', json_build_object(
+                          'collectionName', collections.name,
+                          'attributes', ARRAY[json_build_object('key', attribute_keys.key, 'value', attributes.value)],
+                          'image', (collections.metadata ->> 'imageUrl')::TEXT
+                        )
+                      )
+                    FROM attributes
+                    JOIN attribute_keys
+                    ON attributes.attribute_key_id = attribute_keys.id
+                    JOIN collections
+                    ON attribute_keys.collection_id = collections.id
+                    WHERE token_sets.attribute_id = attributes.id)
+                END  
+              FROM token_sets
+              WHERE token_sets.id = orders.token_set_id AND token_sets.schema_hash = orders.token_set_schema_hash)
+            ELSE NULL
+          END
+      `;
+      }
+
+      metadataQuery = `
+             LEFT JOIN LATERAL (
+                SELECT name AS "token_name", image AS "token_image"
+                FROM tokens
+                WHERE user_activities.contract = tokens.contract
+                AND user_activities.token_id = tokens.token_id
+             ) t ON TRUE
+             ${!_.isEmpty(collections) || community ? "" : "LEFT"} JOIN LATERAL (
+                SELECT name AS "collection_name", metadata AS "collection_metadata"
+                FROM collections
+                WHERE user_activities.collection_id = collections.id
+                ${collectionFilter}
+                ${communityFilter}
+             ) c ON TRUE
+             LEFT JOIN LATERAL (
+                SELECT 
+                    source_id_int AS "order_source_id_int",
+                    side AS "order_side",
+                    kind AS "order_kind",
+                    (${orderMetadataBuildQuery}) AS "order_metadata",
+                    (${orderCriteriaBuildQuery}) AS "order_criteria"
+                FROM orders
+                WHERE user_activities.order_id = orders.id
+             ) o ON TRUE
+             `;
+    }
+
     const values = {
       limit,
-      createdBefore,
+      createdBefore: sortBy == "eventTimestamp" ? Number(createdBefore) : createdBefore,
       types: _.join(types, "','"),
+      collections,
+      community,
     };
 
     let usersFilter = "";
@@ -94,21 +238,11 @@ export class UserActivities {
     const activities: UserActivitiesEntityParams[] | null = await redb.manyOrNone(
       `SELECT *
              FROM user_activities
-             LEFT JOIN LATERAL (
-                SELECT name AS "token_name", image AS "token_image"
-                FROM tokens
-                WHERE user_activities.contract = tokens.contract
-                AND user_activities.token_id = tokens.token_id
-             ) t ON TRUE
-             LEFT JOIN LATERAL (
-                SELECT name AS "collection_name", metadata AS "collection_metadata"
-                FROM collections
-                WHERE user_activities.collection_id = collections.id
-             ) c ON TRUE
+             ${metadataQuery}   
              WHERE ${usersFilter}
              ${continuation}
              ${typesFilter}
-             ORDER BY event_timestamp DESC NULLS LAST
+             ORDER BY ${sortByColumn} DESC NULLS LAST
              LIMIT $/limit/`,
       values
     );

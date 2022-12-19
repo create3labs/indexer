@@ -9,11 +9,12 @@ import { toBuffer } from "@/common/utils";
 import { config } from "@/config/index";
 import * as orderUpdatesById from "@/jobs/order-updates/by-id-queue";
 
+import * as commonHelpers from "@/orderbook/orders/common/helpers";
+import * as raribleCheck from "@/orderbook/orders/rarible/check";
 import * as looksRareCheck from "@/orderbook/orders/looks-rare/check";
-import * as opendaoCheck from "@/orderbook/orders/opendao/check";
 import * as seaportCheck from "@/orderbook/orders/seaport/check";
 import * as x2y2Check from "@/orderbook/orders/x2y2/check";
-import * as zeroExV4 from "@/orderbook/orders/zeroex-v4/check";
+import * as zeroExV4Check from "@/orderbook/orders/zeroex-v4/check";
 
 const QUEUE_NAME = "order-fixes";
 
@@ -25,7 +26,7 @@ export const queue = new Queue(QUEUE_NAME, {
       type: "exponential",
       delay: 10000,
     },
-    removeOnComplete: 10000,
+    removeOnComplete: 1000,
     removeOnFail: 10000,
     timeout: 60000,
   },
@@ -42,21 +43,24 @@ if (config.doBackgroundWork) {
       try {
         switch (by) {
           case "id": {
-            // If the order is valid, recheck is status.
+            // If the order is valid or potentially valid, recheck it's status
             const result = await redb.oneOrNone(
               `
                 SELECT
+                  orders.side,
+                  orders.token_set_id,
                   orders.kind,
                   orders.raw_data
                 FROM orders
                 WHERE orders.id = $/id/
-                  AND orders.fillability_status = 'fillable'
-                  AND orders.approval_status = 'approved'
+                  AND (orders.fillability_status = 'fillable' OR orders.fillability_status = 'no-balance')
+                  AND (orders.approval_status = 'approved' OR orders.approval_status = 'no-approval')
               `,
               { id: data.id }
             );
 
-            if (result) {
+            // TODO: Support validating orders for which `raw_data` is null
+            if (result && result.raw_data) {
               let fillabilityStatus = "fillable";
               let approvalStatus = "approved";
 
@@ -81,32 +85,8 @@ if (config.doBackgroundWork) {
                     } else if (error.message === "no-balance-no-approval") {
                       fillabilityStatus = "no-balance";
                       approvalStatus = "no-approval";
-                    }
-                  }
-                  break;
-                }
-
-                case "opendao-erc721":
-                case "opendao-erc1155": {
-                  const order = new Sdk.OpenDao.Order(config.chainId, result.raw_data);
-                  try {
-                    await opendaoCheck.offChainCheck(order, {
-                      onChainApprovalRecheck: true,
-                      checkFilledOrCancelled: true,
-                    });
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  } catch (error: any) {
-                    if (error.message === "cancelled") {
-                      fillabilityStatus = "cancelled";
-                    } else if (error.message === "filled") {
-                      fillabilityStatus = "filled";
-                    } else if (error.message === "no-balance") {
-                      fillabilityStatus = "no-balance";
-                    } else if (error.message === "no-approval") {
-                      approvalStatus = "no-approval";
-                    } else if (error.message === "no-balance-no-approval") {
-                      fillabilityStatus = "no-balance";
-                      approvalStatus = "no-approval";
+                    } else {
+                      return;
                     }
                   }
                   break;
@@ -132,6 +112,8 @@ if (config.doBackgroundWork) {
                     } else if (error.message === "no-balance-no-approval") {
                       fillabilityStatus = "no-balance";
                       approvalStatus = "no-approval";
+                    } else {
+                      return;
                     }
                   }
                   break;
@@ -141,7 +123,7 @@ if (config.doBackgroundWork) {
                 case "zeroex-v4-erc1155": {
                   const order = new Sdk.ZeroExV4.Order(config.chainId, result.raw_data);
                   try {
-                    await zeroExV4.offChainCheck(order, {
+                    await zeroExV4Check.offChainCheck(order, {
                       onChainApprovalRecheck: true,
                       checkFilledOrCancelled: true,
                     });
@@ -158,6 +140,8 @@ if (config.doBackgroundWork) {
                     } else if (error.message === "no-balance-no-approval") {
                       fillabilityStatus = "no-balance";
                       approvalStatus = "no-approval";
+                    } else {
+                      return;
                     }
                   }
                   break;
@@ -183,6 +167,58 @@ if (config.doBackgroundWork) {
                     } else if (error.message === "no-balance-no-approval") {
                       fillabilityStatus = "no-balance";
                       approvalStatus = "no-approval";
+                    } else {
+                      return;
+                    }
+                  }
+                  break;
+                }
+
+                case "sudoswap": {
+                  try {
+                    // TODO: Add support for bid validation
+                    if (result.side === "sell") {
+                      const order = new Sdk.Sudoswap.Order(config.chainId, result.raw_data);
+
+                      const [, contract, tokenId] = result.token_set_id.split(":");
+                      const balance = await commonHelpers.getNftBalance(
+                        contract,
+                        tokenId,
+                        order.params.pair
+                      );
+                      if (balance.lte(0)) {
+                        fillabilityStatus = "no-balance";
+                      }
+                    }
+                  } catch {
+                    return;
+                  }
+
+                  break;
+                }
+
+                case "rarible": {
+                  const order = new Sdk.Rarible.Order(config.chainId, result.raw_data);
+                  try {
+                    await raribleCheck.offChainCheck(order, {
+                      onChainApprovalRecheck: true,
+                      checkFilledOrCancelled: true,
+                    });
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  } catch (error: any) {
+                    if (error.message === "cancelled") {
+                      fillabilityStatus = "cancelled";
+                    } else if (error.message === "filled") {
+                      fillabilityStatus = "filled";
+                    } else if (error.message === "no-balance") {
+                      fillabilityStatus = "no-balance";
+                    } else if (error.message === "no-approval") {
+                      approvalStatus = "no-approval";
+                    } else if (error.message === "no-balance-no-approval") {
+                      fillabilityStatus = "no-balance";
+                      approvalStatus = "no-approval";
+                    } else {
+                      return;
                     }
                   }
                   break;
@@ -207,7 +243,7 @@ if (config.doBackgroundWork) {
               );
 
               if (fixResult) {
-                // Update any wrong caches.
+                // Update any wrong caches
                 await orderUpdatesById.addToQueue([
                   {
                     context: `revalidation-${Date.now()}-${fixResult.id}`,
@@ -224,7 +260,7 @@ if (config.doBackgroundWork) {
           }
 
           case "token": {
-            // Trigger a fix for all valid orders on the token.
+            // Trigger a fix for all valid orders on the token
             const result = await redb.manyOrNone(
               `
                 SELECT "o"."id" FROM "orders" "o"
@@ -242,8 +278,8 @@ if (config.doBackgroundWork) {
           }
 
           case "maker": {
-            // Trigger a fix for all of valid orders from the maker.
-            // TODO: Use keyset pagination to be able to handle large amounts of orders.
+            // Trigger a fix for all of valid orders from the maker
+            // TODO: Use keyset pagination to be able to handle large amounts of orders
             const result = await redb.manyOrNone(
               `
                 SELECT "o"."id" FROM "orders" "o"
@@ -262,9 +298,9 @@ if (config.doBackgroundWork) {
           }
 
           case "contract": {
-            // Trigger a fix for all valid orders on the contract.
+            // Trigger a fix for all valid orders on the contract
             for (const side of ["sell", "buy"]) {
-              // TODO: Use keyset pagination to be able to handle large amounts of orders.
+              // TODO: Use keyset pagination to be able to handle large amounts of orders
               const result = await redb.manyOrNone(
                 `
                   SELECT "o"."id" FROM "orders" "o"

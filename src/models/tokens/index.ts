@@ -10,6 +10,7 @@ import {
   TokensEntityParams,
   TokensEntityUpdateParams,
 } from "@/models/tokens/tokens-entity";
+import { config } from "@/config/index";
 
 export type TokenAttributes = {
   attributeId: number;
@@ -18,6 +19,7 @@ export type TokenAttributes = {
   attributeKeyId: number;
   collectionId: string;
   floorSellValue: number | null;
+  tokenCount: number;
 };
 
 export class Tokens {
@@ -40,6 +42,30 @@ export class Tokens {
 
     if (token) {
       return new TokensEntity(token);
+    }
+
+    return null;
+  }
+
+  public static async getCollectionId(contract: string, tokenId: string) {
+    // For polygon no shared contracts at the moment
+    if (config.chainId === 137) {
+      return contract;
+    }
+
+    const collectionId = await redb.oneOrNone(
+      `SELECT collection_id
+              FROM tokens
+              WHERE contract = $/contract/
+              AND token_id = $/tokenId/`,
+      {
+        contract: toBuffer(contract),
+        tokenId,
+      }
+    );
+
+    if (collectionId) {
+      return collectionId["collection_id"];
     }
 
     return null;
@@ -70,7 +96,7 @@ export class Tokens {
 
   public static async getTokenAttributes(contract: string, tokenId: string) {
     const query = `SELECT attribute_id AS "attributeId", token_attributes.key, token_attributes.value, attribute_key_id AS "attributeKeyId",
-                          token_attributes.collection_id AS "collectionId", floor_sell_value AS "floorSellValue"
+                          token_attributes.collection_id AS "collectionId", floor_sell_value AS "floorSellValue", token_count AS "tokenCount"
                    FROM token_attributes
                    JOIN attributes ON token_attributes.attribute_id = attributes.id
                    WHERE contract = $/contract/
@@ -120,6 +146,25 @@ export class Tokens {
         collectionId,
       })
       .then((result) => (result ? result.count : 0));
+  }
+
+  public static async getSingleToken(collectionId: string) {
+    const query = `
+        SELECT token_id
+        FROM tokens
+        WHERE collection_id = $/collectionId/
+        LIMIT 1
+      `;
+
+    const result = await redb.oneOrNone(query, {
+      collectionId,
+    });
+
+    if (result) {
+      return result.token_id;
+    }
+
+    return null;
   }
 
   public static async getTokenIdsInCollection(

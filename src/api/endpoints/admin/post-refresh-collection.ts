@@ -13,6 +13,7 @@ import * as collectionUpdatesMetadata from "@/jobs/collection-updates/metadata-q
 import * as metadataIndexFetch from "@/jobs/metadata-index/fetch-queue";
 import * as orderFixes from "@/jobs/order-fixes/queue";
 import { Collections } from "@/models/collections";
+import { Tokens } from "@/models/tokens";
 
 export const postRefreshCollectionOptions: RouteOptions = {
   description: "Refresh a collection's orders and metadata",
@@ -28,6 +29,9 @@ export const postRefreshCollectionOptions: RouteOptions = {
           "Refresh the given collection. Example: `0x8d04a8c79ceb0889bdd12acdf3fa9d207ed3ff63`"
         )
         .required(),
+      cacheOnly: Joi.boolean()
+        .default(false)
+        .description("If true, will only refresh the collection cache."),
     }),
   },
   handler: async (request: Request) => {
@@ -45,13 +49,17 @@ export const postRefreshCollectionOptions: RouteOptions = {
         throw Boom.badRequest(`Collection ${payload.collection} not found`);
       }
 
-      // Update the last sync date
-      const currentUtcTime = new Date().toISOString();
-      await Collections.update(payload.collection, { lastMetadataSync: currentUtcTime });
+      if (payload.cacheOnly) {
+        // Refresh the contract floor sell and top bid
+        await collectionsRefreshCache.addToQueue(collection.id);
+      } else {
+        // Update the last sync date
+        const currentUtcTime = new Date().toISOString();
+        await Collections.update(payload.collection, { lastMetadataSync: currentUtcTime });
 
-      // Update the collection id of any missing tokens
-      await edb.none(
-        `
+        // Update the collection id of any missing tokens
+        await edb.none(
+          `
           WITH x AS (
             SELECT
               collections.contract,
@@ -67,35 +75,48 @@ export const postRefreshCollectionOptions: RouteOptions = {
             AND tokens.token_id <@ x.token_id_range
             AND tokens.collection_id IS NULL
         `,
-        { collection: payload.collection }
-      );
+          { collection: payload.collection }
+        );
 
-      // Refresh the collection metadata
-      const tokenId = _.isEmpty(collection.tokenIdRange) ? "1" : `${collection.tokenIdRange[0]}`;
-      await collectionUpdatesMetadata.addToQueue(collection.contract, tokenId);
+        // Refresh the collection metadata
+        let tokenId;
+        if (_.isNull(collection.tokenIdRange)) {
+          tokenId = await Tokens.getSingleToken(payload.collection);
+        } else {
+          tokenId = _.isEmpty(collection.tokenIdRange) ? "1" : `${collection.tokenIdRange[0]}`;
+        }
 
-      // Refresh the contract floor sell and top bid
-      await collectionsRefreshCache.addToQueue(collection.contract);
+        await collectionUpdatesMetadata.addToQueue(
+          collection.contract,
+          tokenId,
+          collection.community
+        );
 
-      // Revalidate the contract orders
-      await orderFixes.addToQueue([{ by: "contract", data: { contract: collection.contract } }]);
+        // Refresh the contract floor sell and top bid
+        await collectionsRefreshCache.addToQueue(collection.id);
 
-      // Refresh contract orders from OpenSea
-      // await OpenseaIndexerApi.fastContractSync(collection.contract);
+        // Revalidate the contract orders
+        await orderFixes.addToQueue([{ by: "contract", data: { contract: collection.contract } }]);
 
-      // Refresh the collection tokens metadata
-      await metadataIndexFetch.addToQueue(
-        [
-          {
-            kind: "full-collection",
-            data: {
-              method: config.metadataIndexingMethod,
-              collection: collection.id,
+        // if (config.metadataIndexingMethod === "opensea") {
+        // Refresh contract orders from OpenSea
+        // await OpenseaIndexerApi.fastContractSync(collection.contract);
+        // }
+
+        // Refresh the collection tokens metadata
+        await metadataIndexFetch.addToQueue(
+          [
+            {
+              kind: "full-collection",
+              data: {
+                method: metadataIndexFetch.getIndexingMethod(collection.community),
+                collection: collection.id,
+              },
             },
-          },
-        ],
-        true
-      );
+          ],
+          true
+        );
+      }
 
       return { message: "Request accepted" };
     } catch (error) {

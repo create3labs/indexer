@@ -1,7 +1,8 @@
+import { Interface } from "@ethersproject/abi";
 import { AddressZero } from "@ethersproject/constants";
 import * as Sdk from "@0xlol/sdk";
-import { getReferrer } from "@0xlol/sdk/dist/utils";
-import pLimit from "p-limit";
+import { getTxTrace } from "@georgeroman/evm-tx-simulator";
+import { getSource } from "@0xlol/sdk/dist/utils";
 
 import { baseProvider } from "@/common/provider";
 import { bn } from "@/common/utils";
@@ -9,7 +10,9 @@ import { config } from "@/config/index";
 import { getBlocks, saveBlock } from "@/models/blocks";
 import { Sources } from "@/models/sources";
 import { SourcesEntity } from "@/models/sources/sources-entity";
-import { getTransaction, saveTransaction } from "@/models/transactions";
+import { getTransaction, saveTransaction, saveTransactions } from "@/models/transactions";
+import { getTransactionLogs, saveTransactionLogs } from "@/models/transaction-logs";
+import { getTransactionTrace, saveTransactionTrace } from "@/models/transaction-traces";
 import { OrderKind, getOrderSourceByOrderKind } from "@/orderbook/orders";
 
 export const fetchBlock = async (blockNumber: number, force = false) =>
@@ -21,33 +24,31 @@ export const fetchBlock = async (blockNumber: number, force = false) =>
       } else {
         const block = await baseProvider.getBlockWithTransactions(blockNumber);
 
+        // Create transactions array to store
+        const transactions = block.transactions.map((tx) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const rawTx = tx.raw as any;
+
+          const gasPrice = tx.gasPrice?.toString();
+          const gasUsed = rawTx?.gas ? bn(rawTx.gas).toString() : undefined;
+          const gasFee = gasPrice && gasUsed ? bn(gasPrice).mul(gasUsed).toString() : undefined;
+
+          return {
+            hash: tx.hash.toLowerCase(),
+            from: tx.from.toLowerCase(),
+            to: (tx.to || AddressZero).toLowerCase(),
+            value: tx.value.toString(),
+            data: tx.data.toLowerCase(),
+            blockNumber: block.number,
+            blockTimestamp: block.timestamp,
+            gasPrice,
+            gasUsed,
+            gasFee,
+          };
+        });
+
         // Save all transactions within the block
-        const limit = pLimit(20);
-        await Promise.all(
-          block.transactions.map((tx) =>
-            limit(async () => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              const rawTx = tx.raw as any;
-
-              const gasPrice = tx.gasPrice?.toString();
-              const gasUsed = rawTx?.gas ? bn(rawTx.gas).toString() : undefined;
-              const gasFee = gasPrice && gasUsed ? bn(gasPrice).mul(gasUsed).toString() : undefined;
-
-              await saveTransaction({
-                hash: tx.hash.toLowerCase(),
-                from: tx.from.toLowerCase(),
-                to: (tx.to || AddressZero).toLowerCase(),
-                value: tx.value.toString(),
-                data: tx.data.toLowerCase(),
-                blockNumber: block.number,
-                blockTimestamp: block.timestamp,
-                gasPrice,
-                gasUsed,
-                gasFee,
-              });
-            })
-          )
-        );
+        await saveTransactions(transactions);
 
         return saveBlock({
           number: block.number,
@@ -95,44 +96,95 @@ export const fetchTransaction = async (txHash: string) =>
     });
   });
 
-export const extractAttributionData = async (txHash: string, orderKind: OrderKind) => {
+export const fetchTransactionTrace = async (txHash: string) =>
+  getTransactionTrace(txHash)
+    .catch(async () => {
+      const transactionTrace = await getTxTrace({ hash: txHash }, baseProvider);
+
+      return saveTransactionTrace({
+        hash: txHash,
+        calls: transactionTrace,
+      });
+    })
+    .catch(() => undefined);
+
+export const fetchTransactionLogs = async (txHash: string) =>
+  getTransactionLogs(txHash).catch(async () => {
+    const receipt = await baseProvider.getTransactionReceipt(txHash);
+
+    return saveTransactionLogs({
+      hash: txHash,
+      logs: receipt.logs,
+    });
+  });
+
+export const extractAttributionData = async (
+  txHash: string,
+  orderKind: OrderKind,
+  address?: string
+) => {
   const sources = await Sources.getInstance();
 
   let aggregatorSource: SourcesEntity | undefined;
   let fillSource: SourcesEntity | undefined;
   let taker: string | undefined;
 
+  const orderSource = await getOrderSourceByOrderKind(orderKind, address);
+
   // Properly set the taker when filling through router contracts
   const tx = await fetchTransaction(txHash);
-  const router = Sdk.Common.Addresses.Routers[config.chainId]?.[tx.to];
+  let router = Sdk.Common.Addresses.Routers[config.chainId]?.[tx.to];
+  if (!router) {
+    // Handle cases where we transfer directly to the router when filling bids
+    if (tx.data.startsWith("0xb88d4fde")) {
+      const iface = new Interface([
+        "function safeTransferFrom(address from, address to, uint256 tokenId, bytes data)",
+      ]);
+      const result = iface.decodeFunctionData("safeTransferFrom", tx.data);
+      router = Sdk.Common.Addresses.Routers[config.chainId]?.[result.to.toLowerCase()];
+    } else if (tx.data.startsWith("0xf242432a")) {
+      const iface = new Interface([
+        "function safeTransferFrom(address from, address to, uint256 id, uint256 value, bytes data)",
+      ]);
+      const result = iface.decodeFunctionData("safeTransferFrom", tx.data);
+      router = Sdk.Common.Addresses.Routers[config.chainId]?.[result.to.toLowerCase()];
+    }
+  }
   if (router) {
     taker = tx.from;
   }
 
-  const referrer = getReferrer(tx.data);
+  let source = getSource(tx.data);
+  if (!source) {
+    const last4Bytes = "0x" + tx.data.slice(-8);
+    source = sources.getByDomainHash(last4Bytes)?.domain;
+  }
 
   // Reference: https://github.com/reservoirprotocol/core/issues/22#issuecomment-1191040945
-  if (referrer) {
-    aggregatorSource = await sources.getOrInsert("reservoir.tools");
-    fillSource = await sources.getOrInsert(referrer);
-
-    // Special rule for handling Gem filling directly on Seaport
-    if (fillSource?.domain === "gem.xyz") {
-      aggregatorSource = fillSource;
+  if (source) {
+    // TODO: Properly handle aggregator detection
+    if (source !== "opensea.io" && source !== "gem.xyz" && source !== "blur.io") {
+      // Do not associate OpenSea / Gem direct fills to Reservoir
+      aggregatorSource = await sources.getOrInsert("reservoir.tools");
+    } else if (source === "gem.xyz") {
+      // Associate Gem direct fills to Gem
+      aggregatorSource = await sources.getOrInsert("gem.xyz");
+    } else if (source === "blur.io") {
+      // Associate Blur direct fills to Blur
+      aggregatorSource = await sources.getOrInsert("blur.io");
     }
+    fillSource = await sources.getOrInsert(source);
   } else if (router === "reservoir.tools") {
     aggregatorSource = await sources.getOrInsert("reservoir.tools");
   } else if (router) {
     aggregatorSource = await sources.getOrInsert(router);
     fillSource = await sources.getOrInsert(router);
   } else {
-    const defaultSourceId = await getOrderSourceByOrderKind(orderKind);
-    if (defaultSourceId) {
-      fillSource = defaultSourceId;
-    }
+    fillSource = orderSource;
   }
 
   return {
+    orderSource,
     fillSource,
     aggregatorSource,
     taker,

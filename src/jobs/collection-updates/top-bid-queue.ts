@@ -16,7 +16,7 @@ export const queue = new Queue(QUEUE_NAME, {
       type: "exponential",
       delay: 20000,
     },
-    removeOnComplete: 10000,
+    removeOnComplete: 1000,
     removeOnFail: 10000,
     timeout: 60000,
   },
@@ -108,7 +108,7 @@ if (config.doBackgroundWork) {
               $/txHash/,
               $/txTimestamp/
             FROM y
-            JOIN LATERAL (
+            LEFT JOIN LATERAL (
               SELECT
                 orders.contract,
                 orders.token_set_id

@@ -2,6 +2,7 @@
 
 import { Request, RouteOptions } from "@hapi/hapi";
 import * as Sdk from "@0xlol/sdk";
+import * as Boom from "@hapi/boom";
 import _ from "lodash";
 import Joi from "joi";
 
@@ -19,6 +20,7 @@ import {
 import { config } from "@/config/index";
 import { CollectionSets } from "@/models/collection-sets";
 import { Sources } from "@/models/sources";
+import { Assets } from "@/utils/assets";
 
 const version = "v5";
 
@@ -65,13 +67,61 @@ export const getCollectionsV5Options: RouteOptions = {
         .default(false)
         .description("If true, top bid will be returned in the response."),
       includeAttributes: Joi.boolean()
-        .when("id", { is: Joi.exist(), then: Joi.allow(), otherwise: Joi.forbidden() })
-        .description("If true, attributes will be included in the response."),
+        .when("id", {
+          is: Joi.exist(),
+          then: Joi.allow(),
+          otherwise: Joi.when("slug", {
+            is: Joi.exist(),
+            then: Joi.allow(),
+            otherwise: Joi.forbidden(),
+          }),
+        })
+        .description(
+          "If true, attributes will be included in the response. (supported only when filtering to a particular collection using `id` or `slug`)"
+        ),
       includeOwnerCount: Joi.boolean()
-        .when("id", { is: Joi.exist(), then: Joi.allow(), otherwise: Joi.forbidden() })
-        .description("If true, owner count will be included in the response."),
+        .when("id", {
+          is: Joi.exist(),
+          then: Joi.allow(),
+          otherwise: Joi.when("slug", {
+            is: Joi.exist(),
+            then: Joi.allow(),
+            otherwise: Joi.forbidden(),
+          }),
+        })
+        .description(
+          "If true, owner count will be included in the response. (supported only when filtering to a particular collection using `id` or `slug`)"
+        ),
+      includeSalesCount: Joi.boolean()
+        .when("id", {
+          is: Joi.exist(),
+          then: Joi.allow(),
+          otherwise: Joi.when("slug", {
+            is: Joi.exist(),
+            then: Joi.allow(),
+            otherwise: Joi.forbidden(),
+          }),
+        })
+        .description(
+          "If true, sales count (1 day, 7 day, 30 day, all time) will be included in the response. (supported only when filtering to a particular collection using `id` or `slug`)"
+        ),
+      normalizeRoyalties: Joi.boolean()
+        .default(false)
+        .description("If true, prices will include missing royalties to be added on-top."),
+      useNonFlaggedFloorAsk: Joi.boolean()
+        .default(false)
+        .description(
+          "If true, return the non flagged floor ask. (only supported when `normalizeRoyalties` is false)"
+        ),
       sortBy: Joi.string()
-        .valid("1DayVolume", "7DayVolume", "30DayVolume", "allTimeVolume")
+        .valid(
+          "1DayVolume",
+          "7DayVolume",
+          "30DayVolume",
+          "allTimeVolume",
+          "createdAt",
+          "floorAskPrice"
+        )
         .default("allTimeVolume")
         .description("Order the items are returned in the response."),
       limit: Joi.number()
@@ -92,12 +142,14 @@ export const getCollectionsV5Options: RouteOptions = {
         Joi.object({
           id: Joi.string(),
           slug: Joi.string().allow(null, "").description("Open Sea slug"),
+          createdAt: Joi.string(),
           name: Joi.string().allow(null, ""),
           image: Joi.string().allow(null, ""),
           banner: Joi.string().allow(null, ""),
           discordUrl: Joi.string().allow(null, ""),
           externalUrl: Joi.string().allow(null, ""),
           twitterUsername: Joi.string().allow(null, ""),
+          openseaVerificationStatus: Joi.string().allow(null, ""),
           description: Joi.string().allow(null, ""),
           sampleImages: Joi.array().items(Joi.string().allow(null, "")),
           tokenCount: Joi.string(),
@@ -128,6 +180,7 @@ export const getCollectionsV5Options: RouteOptions = {
           },
           topBid: Joi.object({
             id: Joi.string().allow(null),
+            sourceDomain: Joi.string().allow(null, ""),
             price: JoiPrice.allow(null),
             maker: Joi.string().lowercase().pattern(regex.address).allow(null),
             validFrom: Joi.number().unsafe().allow(null),
@@ -159,6 +212,12 @@ export const getCollectionsV5Options: RouteOptions = {
             "1day": Joi.number().unsafe().allow(null),
             "7day": Joi.number().unsafe().allow(null),
             "30day": Joi.number().unsafe().allow(null),
+          },
+          salesCount: {
+            "1day": Joi.number().unsafe().allow(null),
+            "7day": Joi.number().unsafe().allow(null),
+            "30day": Joi.number().unsafe().allow(null),
+            allTime: Joi.number().unsafe().allow(null),
           },
           collectionBidSupported: Joi.boolean(),
           ownerCount: Joi.number().optional(),
@@ -203,7 +262,10 @@ export const getCollectionsV5Options: RouteOptions = {
             orders.price AS top_buy_price,
             orders.value AS top_buy_value,
             orders.currency_price AS top_buy_currency_price,
-            orders.currency_value AS top_buy_currency_value
+            orders.source_id_int AS top_buy_source_id_int,
+            orders.currency_value AS top_buy_currency_value,
+            orders.normalized_value AS top_buy_normalized_value,
+            orders.currency_normalized_value AS top_buy_currency_normalized_value
           FROM token_sets
           LEFT JOIN orders
             ON token_sets.top_buy_id = orders.id
@@ -253,6 +315,66 @@ export const getCollectionsV5Options: RouteOptions = {
         `;
       }
 
+      let saleCountSelectQuery = "";
+      let saleCountJoinQuery = "";
+      if (query.includeSalesCount) {
+        saleCountSelectQuery = ", s.*";
+        saleCountJoinQuery = `
+        LEFT JOIN LATERAL (
+          SELECT
+            SUM(CASE
+                  WHEN fe.created_at > NOW() - INTERVAL '24 HOURS'
+                  THEN 1
+                  ELSE 0
+                END) AS day_sale_count,
+            SUM(CASE
+                  WHEN fe.created_at > NOW() - INTERVAL '7 DAYS'
+                  THEN 1
+                  ELSE 0
+                END) AS week_sale_count,
+            SUM(CASE
+                  WHEN fe.created_at > NOW() - INTERVAL '30 DAYS'
+                  THEN 1
+                  ELSE 0
+                END) AS month_sale_count,
+            COUNT(*) AS total_sale_count
+          FROM fill_events_2 fe
+          WHERE fe.contract = x.contract
+        ) s ON TRUE
+      `;
+      }
+
+      let floorAskSelectQuery;
+
+      if (query.normalizeRoyalties) {
+        floorAskSelectQuery = `
+            collections.normalized_floor_sell_id AS floor_sell_id,
+            collections.normalized_floor_sell_value AS floor_sell_value,
+            collections.normalized_floor_sell_maker AS floor_sell_maker,
+            least(2147483647::NUMERIC, date_part('epoch', lower(collections.normalized_floor_sell_valid_between)))::INT AS floor_sell_valid_from,
+            least(2147483647::NUMERIC, coalesce(nullif(date_part('epoch', upper(collections.normalized_floor_sell_valid_between)), 'Infinity'),0))::INT AS floor_sell_valid_until,
+            collections.normalized_floor_sell_source_id_int AS floor_sell_source_id_int,
+            `;
+      } else if (query.useNonFlaggedFloorAsk) {
+        floorAskSelectQuery = `
+            collections.non_flagged_floor_sell_id AS floor_sell_id,
+            collections.non_flagged_floor_sell_value AS floor_sell_value,
+            collections.non_flagged_floor_sell_maker AS floor_sell_maker,
+            least(2147483647::NUMERIC, date_part('epoch', lower(collections.non_flagged_floor_sell_valid_between)))::INT AS floor_sell_valid_from,
+            least(2147483647::NUMERIC, coalesce(nullif(date_part('epoch', upper(collections.non_flagged_floor_sell_valid_between)), 'Infinity'),0))::INT AS floor_sell_valid_until,
+            collections.non_flagged_floor_sell_source_id_int AS floor_sell_source_id_int,
+            `;
+      } else {
+        floorAskSelectQuery = `
+            collections.floor_sell_id,
+            collections.floor_sell_value,
+            collections.floor_sell_maker,
+            least(2147483647::NUMERIC, date_part('epoch', lower(collections.floor_sell_valid_between)))::INT AS floor_sell_valid_from,
+            least(2147483647::NUMERIC, coalesce(nullif(date_part('epoch', upper(collections.floor_sell_valid_between)), 'Infinity'),0))::INT AS floor_sell_valid_until,
+            collections.floor_sell_source_id_int,
+      `;
+      }
+
       let baseQuery = `
         SELECT
           collections.id,
@@ -264,6 +386,7 @@ export const getCollectionsV5Options: RouteOptions = {
           (collections.metadata ->> 'description')::TEXT AS "description",
           (collections.metadata ->> 'externalUrl')::TEXT AS "external_url",
           (collections.metadata ->> 'twitterUsername')::TEXT AS "twitter_username",
+          (collections.metadata ->> 'safelistRequestStatus')::TEXT AS "opensea_verification_status",
           collections.royalties,
           collections.contract,
           collections.token_id_range,
@@ -282,7 +405,9 @@ export const getCollectionsV5Options: RouteOptions = {
           collections.day1_floor_sell_value,
           collections.day7_floor_sell_value,
           collections.day30_floor_sell_value,
+          ${floorAskSelectQuery}
           collections.token_count,
+          collections.created_at,
           (
             SELECT
               COUNT(*)
@@ -316,7 +441,11 @@ export const getCollectionsV5Options: RouteOptions = {
       }
       if (query.collectionsSetId) {
         query.collectionsIds = await CollectionSets.getCollectionsIds(query.collectionsSetId);
-        conditions.push(`collections.id IN ($/collectionsIds:csv/')`);
+        if (_.isEmpty(query.collectionsIds)) {
+          throw Boom.badRequest(`No collections for collection set ${query.collectionsSetId}`);
+        }
+
+        conditions.push(`collections.id IN ($/collectionsIds:csv/)`);
       }
       if (query.contract) {
         if (!Array.isArray(query.contract)) {
@@ -333,36 +462,70 @@ export const getCollectionsV5Options: RouteOptions = {
       // Sorting and pagination
 
       if (query.continuation) {
-        query.continuation = splitContinuation(query.continuation)[0];
+        const [contParam, contId] = _.split(splitContinuation(query.continuation)[0], "_");
+        query.contParam = contParam;
+        query.contId = contId;
       }
-
-      // TODO: Should we have the collection volume indexes on `NULLS LAST`?
 
       let orderBy = "";
       switch (query.sortBy) {
         case "1DayVolume": {
           if (query.continuation) {
-            conditions.push(`collections.day1_volume < $/continuation/`);
+            conditions.push(
+              `(collections.day1_volume, collections.id) < ($/contParam/, $/contId/)`
+            );
           }
-          orderBy = ` ORDER BY collections.day1_volume DESC`;
+          orderBy = ` ORDER BY collections.day1_volume DESC, collections.id DESC`;
 
           break;
         }
 
         case "7DayVolume": {
           if (query.continuation) {
-            conditions.push(`collections.day7_volume < $/continuation/`);
+            conditions.push(
+              `(collections.day7_volume, collections.id) < ($/contParam/, $/contId/)`
+            );
           }
-          orderBy = ` ORDER BY collections.day7_volume DESC`;
+          orderBy = ` ORDER BY collections.day7_volume DESC, collections.id DESC`;
 
           break;
         }
 
         case "30DayVolume": {
           if (query.continuation) {
-            conditions.push(`collections.day30_volume < $/continuation/`);
+            conditions.push(
+              `(collections.day30_volume, collections.id) < ($/contParam/, $/contId/)`
+            );
           }
-          orderBy = ` ORDER BY collections.day30_volume DESC`;
+          orderBy = ` ORDER BY collections.day30_volume DESC, collections.id DESC`;
+
+          break;
+        }
+
+        case "createdAt": {
+          if (query.continuation) {
+            conditions.push(`(collections.created_at, collections.id) < ($/contParam/, $/contId/)`);
+          }
+          orderBy = ` ORDER BY collections.created_at DESC, collections.id DESC`;
+
+          break;
+        }
+
+        case "floorAskPrice": {
+          if (query.continuation) {
+            conditions.push(
+              query.normalizeRoyalties
+                ? `(collections.normalized_floor_sell_value, collections.id) > ($/contParam/, $/contId/)`
+                : query.useNonFlaggedFloorAsk
+                ? `(collections.non_flagged_floor_sell_value, collections.id) > ($/contParam/, $/contId/)`
+                : `(collections.floor_sell_value, collections.id) > ($/contParam/, $/contId/)`
+            );
+          }
+          orderBy = query.normalizeRoyalties
+            ? ` ORDER BY collections.normalized_floor_sell_value, collections.id`
+            : query.useNonFlaggedFloorAsk
+            ? ` ORDER BY collections.non_flagged_floor_sell_value, collections.id`
+            : ` ORDER BY collections.floor_sell_value, collections.id`;
 
           break;
         }
@@ -370,9 +533,12 @@ export const getCollectionsV5Options: RouteOptions = {
         case "allTimeVolume":
         default: {
           if (query.continuation) {
-            conditions.push(`collections.all_time_volume < $/continuation/`);
+            conditions.push(
+              `(collections.all_time_volume, collections.id) < ($/contParam/, $/contId/)`
+            );
           }
-          orderBy = ` ORDER BY collections.all_time_volume DESC`;
+
+          orderBy = ` ORDER BY collections.all_time_volume DESC, collections.id DESC`;
 
           break;
         }
@@ -393,35 +559,33 @@ export const getCollectionsV5Options: RouteOptions = {
           ${ownerCountSelectQuery}
           ${attributesSelectQuery}
           ${topBidSelectQuery}
+          ${saleCountSelectQuery}
         FROM x
         LEFT JOIN LATERAL (
-          SELECT
-            tokens.floor_sell_source_id_int,
-            tokens.contract AS floor_sell_token_contract,
-            tokens.token_id AS floor_sell_token_id,
-            tokens.name AS floor_sell_token_name,
-            tokens.image AS floor_sell_token_image,
-            tokens.floor_sell_id,
-            tokens.floor_sell_value,
-            tokens.floor_sell_maker,
-            tokens.floor_sell_valid_from,
-            tokens.floor_sell_valid_to AS floor_sell_valid_until,
-            tokens.floor_sell_currency,
-            tokens.floor_sell_currency_value
-          FROM tokens
-          LEFT JOIN orders
-            ON tokens.floor_sell_id = orders.id
-          WHERE tokens.collection_id = x.id
-          ORDER BY tokens.floor_sell_value
-          LIMIT 1
+           SELECT
+             tokens.contract AS floor_sell_token_contract,
+             tokens.token_id AS floor_sell_token_id,
+             tokens.name AS floor_sell_token_name,
+             tokens.image AS floor_sell_token_image,
+             orders.currency AS floor_sell_currency,
+             ${
+               query.normalizeRoyalties
+                 ? "orders.currency_normalized_value AS floor_sell_currency_value"
+                 : "orders.currency_value AS floor_sell_currency_value"
+             }
+           FROM orders
+           JOIN token_sets_tokens ON token_sets_tokens.token_set_id = orders.token_set_id
+           JOIN tokens ON tokens.contract = token_sets_tokens.contract AND tokens.token_id = token_sets_tokens.token_id
+           WHERE orders.id = x.floor_sell_id
         ) y ON TRUE
         ${ownerCountJoinQuery}
         ${attributesJoinQuery}
         ${topBidJoinQuery}
+        ${saleCountJoinQuery}
       `;
 
       // Any further joins might not preserve sorting
-      baseQuery += orderBy.replace("collections", "x");
+      baseQuery += orderBy.replace(/collections/g, "x");
 
       const results = await redb.manyOrNone(baseQuery, query);
 
@@ -433,6 +597,7 @@ export const getCollectionsV5Options: RouteOptions = {
           const floorAskCurrency = r.floor_sell_currency
             ? fromBuffer(r.floor_sell_currency)
             : Sdk.Common.Addresses.Eth[config.chainId];
+
           const topBidCurrency = r.top_buy_currency
             ? fromBuffer(r.top_buy_currency)
             : Sdk.Common.Addresses.Weth[config.chainId];
@@ -440,14 +605,18 @@ export const getCollectionsV5Options: RouteOptions = {
           return {
             id: r.id,
             slug: r.slug,
+            createdAt: new Date(r.created_at).toISOString(),
             name: r.name,
-            image: r.image ?? (r.sample_images?.length ? r.sample_images[0] : null),
+            image:
+              r.image ??
+              (r.sample_images?.length ? Assets.getLocalAssetsLink(r.sample_images[0]) : null),
             banner: r.banner,
             discordUrl: r.discord_url,
             externalUrl: r.external_url,
             twitterUsername: r.twitter_username,
+            openseaVerificationStatus: r.opensea_verification_status,
             description: r.description,
-            sampleImages: r.sample_images ?? [],
+            sampleImages: Assets.getLocalAssetsLink(r.sample_images) ?? [],
             tokenCount: String(r.token_count),
             onSaleCount: String(r.on_sale_count),
             primaryContract: fromBuffer(r.contract),
@@ -480,18 +649,23 @@ export const getCollectionsV5Options: RouteOptions = {
                   : null,
                 tokenId: r.floor_sell_token_id,
                 name: r.floor_sell_token_name,
-                image: r.floor_sell_token_image,
+                image: Assets.getLocalAssetsLink(r.floor_sell_token_image),
               },
             },
             topBid: query.includeTopBid
               ? {
                   id: r.top_buy_id,
+                  sourceDomain: sources.get(r.top_buy_source_id_int)?.domain,
                   price: r.top_buy_id
                     ? await getJoiPriceObject(
                         {
                           net: {
-                            amount: r.top_buy_currency_value ?? r.top_buy_value,
-                            nativeAmount: r.top_buy_value,
+                            amount: query.normalizeRoyalties
+                              ? r.top_buy_currency_normalized_value ?? r.top_buy_value
+                              : r.top_buy_currency_value ?? r.top_buy_value,
+                            nativeAmount: query.normalizeRoyalties
+                              ? r.top_buy_normalized_value ?? r.top_buy_value
+                              : r.top_buy_value,
                           },
                           gross: {
                             amount: r.top_buy_currency_price ?? r.top_buy_price,
@@ -539,7 +713,15 @@ export const getCollectionsV5Options: RouteOptions = {
                 ? Number(r.floor_sell_value) / Number(r.day30_floor_sell_value)
                 : null,
             },
-            collectionBidSupported: Number(r.token_count) <= config.maxItemsPerBid,
+            salesCount: query.includeSalesCount
+              ? {
+                  "1day": r.day_sale_count,
+                  "7day": r.week_sale_count,
+                  "30day": r.month_sale_count,
+                  allTime: r.total_sale_count,
+                }
+              : undefined,
+            collectionBidSupported: Number(r.token_count) <= config.maxTokenSetSize,
             ownerCount: query.includeOwnerCount ? Number(r.owner_count) : undefined,
             attributes: query.includeAttributes
               ? _.map(_.sortBy(r.attributes, ["rank", "key"]), (attribute) => ({
@@ -554,29 +736,51 @@ export const getCollectionsV5Options: RouteOptions = {
 
       // Pagination
 
-      let continuation: number | null = null;
+      let continuation: string | null = null;
       if (results.length >= query.limit) {
         const lastCollection = _.last(results);
         if (lastCollection) {
           switch (query.sortBy) {
             case "1DayVolume": {
-              continuation = lastCollection.day1_volume;
+              continuation = buildContinuation(
+                `${lastCollection.day1_volume}_${lastCollection.id}`
+              );
               break;
             }
 
             case "7DayVolume": {
-              continuation = lastCollection.day7_volume;
+              continuation = buildContinuation(
+                `${lastCollection.day7_volume}_${lastCollection.id}`
+              );
               break;
             }
 
             case "30DayVolume": {
-              continuation = lastCollection.day30_volume;
+              continuation = buildContinuation(
+                `${lastCollection.day30_volume}_${lastCollection.id}`
+              );
+              break;
+            }
+
+            case "createdAt": {
+              continuation = buildContinuation(
+                `${new Date(lastCollection.created_at).toISOString()}_${lastCollection.id}`
+              );
+              break;
+            }
+
+            case "floorAskPrice": {
+              continuation = buildContinuation(
+                `${lastCollection.floor_sell_value}_${lastCollection.id}`
+              );
               break;
             }
 
             case "allTimeVolume":
             default: {
-              continuation = lastCollection.all_time_volume;
+              continuation = buildContinuation(
+                `${lastCollection.all_time_volume}_${lastCollection.id}`
+              );
               break;
             }
           }
@@ -585,7 +789,7 @@ export const getCollectionsV5Options: RouteOptions = {
 
       return {
         collections,
-        continuation: continuation ? buildContinuation(continuation.toString()) : undefined,
+        continuation: continuation ? continuation : undefined,
       };
     } catch (error) {
       logger.error(`get-collections-${version}-handler`, `Handler failure: ${error}`);

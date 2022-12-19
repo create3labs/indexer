@@ -14,6 +14,7 @@ export class MetadataApi {
   public static async getCollectionMetadata(
     contract: string,
     tokenId: string,
+    community = "",
     options?: { allowFallback?: boolean }
   ) {
     if (config.liquidityOnly) {
@@ -36,6 +37,7 @@ export class MetadataApi {
         community: null,
         metadata: null,
         royalties: null,
+        openseaRoyalties: null,
         contract,
         tokenIdRange: null,
         tokenSetId: `contract:${contract}`,
@@ -73,9 +75,10 @@ export class MetadataApi {
         community: string | null;
         metadata: object | null;
         royalties: object | null;
+        openseaRoyalties: object | null;
         contract: string;
         tokenIdRange: [string, string] | null;
-        tokenSetId: string;
+        tokenSetId: string | null;
         isFallback?: boolean;
       } = {
         id: contract.toLowerCase(),
@@ -91,22 +94,24 @@ export class MetadataApi {
           twitterUsername: "",
         },
         royalties: data?.royalties ?? [],
+        openseaRoyalties: data?.royalties ?? [],
         contract: contract,
         tokenIdRange: null,
         tokenSetId: contract,
       };
 
       if (collection.isFallback && !options?.allowFallback) {
-        throw new Error("Fallback collection data not acceptable");
+        throw new Error(`Fallback collection data not acceptable ${tokenId}${community}`);
       }
 
       return collection;
     }
   }
 
-  public static async getTokenMetadata(
+  public static async getTokensMetadata(
     tokens: { contract: string; tokenId: string }[],
-    useAltUrl = false
+    useAltUrl = false,
+    method = ""
   ) {
     const queryParams = new URLSearchParams();
 
@@ -114,17 +119,18 @@ export class MetadataApi {
       queryParams.append("token", `${token.contract}:${token.tokenId}`);
     }
 
+    method = method === "" ? config.metadataIndexingMethod : method;
+
     const url = `${
       useAltUrl ? config.metadataApiBaseUrlAlt : config.metadataApiBaseUrl
-    }/v4/${getNetworkName()}/metadata/token?method=${
-      config.metadataIndexingMethod
-    }&${queryParams.toString()}`;
+    }/v4/${getNetworkName()}/metadata/token?method=${method}&${queryParams.toString()}`;
 
     const { data } = await axios.get(url);
 
     const tokenMetadata: {
       contract: string;
       tokenId: string;
+      collection: string;
       flagged: boolean;
       name?: string;
       description?: string;
@@ -139,6 +145,15 @@ export class MetadataApi {
     }[] = (data as any).metadata;
 
     return tokenMetadata;
+  }
+
+  public static getCollectionIndexingMethod(community: string | null) {
+    switch (community) {
+      case "sound.xyz":
+        return "soundxyz";
+    }
+
+    return config.metadataIndexingMethodCollection;
   }
 }
 

@@ -29,6 +29,12 @@ export type TokenSet = {
         };
       }
     | {
+        kind: "collection";
+        data: {
+          collection: string;
+        };
+      }
+    | {
         kind: "token-set";
         data: {
           tokenSetId: string;
@@ -82,34 +88,25 @@ const isValid = async (tokenSet: TokenSet) => {
 
         tokens = await redb.manyOrNone(
           `
-            SELECT token_attributes.contract, token_attributes.token_id
+            SELECT
+              token_attributes.token_id
             FROM token_attributes
-            JOIN attributes ON token_attributes.attribute_id = attributes.id
-            JOIN attribute_keys ON attributes.attribute_key_id = attribute_keys.id
-            JOIN tokens ON token_attributes.contract = tokens.contract AND token_attributes.token_id = tokens.token_id
+            JOIN attributes
+              ON token_attributes.attribute_id = attributes.id
+            JOIN attribute_keys
+              ON attributes.attribute_key_id = attribute_keys.id
+            JOIN tokens
+              ON token_attributes.contract = tokens.contract
+              AND token_attributes.token_id = tokens.token_id
             WHERE attribute_keys.collection_id = $/collection/
-            AND attribute_keys.key = $/key/
-            AND attributes.value = $/value/
-            ${excludeFlaggedTokens}
+              AND attribute_keys.key = $/key/
+              AND attributes.value = $/value/
+              ${excludeFlaggedTokens}
           `,
           {
             collection: tokenSet.schema!.data.collection,
             key: tokenSet.schema!.data.attributes[0].key,
             value: tokenSet.schema!.data.attributes[0].value,
-          }
-        );
-      } else if (tokenSet.schema.kind === "collection-non-flagged") {
-        tokens = await redb.manyOrNone(
-          `
-            SELECT
-              tokens.contract,
-              tokens.token_id
-            FROM tokens
-            WHERE tokens.collection_id = $/collection/
-            AND tokens.is_flagged = 0
-          `,
-          {
-            collection: tokenSet.schema!.data.collection,
           }
         );
       } else if (tokenSet.schema.kind === "token-set") {
@@ -125,6 +122,23 @@ const isValid = async (tokenSet: TokenSet) => {
             tokenSetId: tokenSet.schema.data.tokenSetId,
           }
         );
+      } else if (tokenSet.schema.kind.startsWith("collection")) {
+        tokens = await redb.manyOrNone(
+          `
+            SELECT
+              tokens.token_id
+            FROM tokens
+            WHERE tokens.collection_id = $/collection/
+              ${
+                tokenSet.schema.kind === "collection-non-flagged"
+                  ? " AND tokens.is_flagged = 0"
+                  : ""
+              }
+          `,
+          {
+            collection: tokenSet.schema.data.collection,
+          }
+        );
       }
 
       if (!tokens || !tokens.length) {
@@ -132,7 +146,11 @@ const isValid = async (tokenSet: TokenSet) => {
       }
 
       // All tokens will share the same underlying contract
-      const contract = fromBuffer(tokens[0].contract);
+      const contract = tokens[0].contract
+        ? fromBuffer(tokens[0].contract)
+        : // Assume the collection id always starts with the contract
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (tokenSet.schema.data as any).collection.slice(0, 42);
       const tokenIds = tokens.map(({ token_id }) => token_id);
 
       // Generate the token set id corresponding to the passed schema
@@ -164,9 +182,26 @@ const isValid = async (tokenSet: TokenSet) => {
 export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
   const queries: PgPromiseQuery[] = [];
 
-  const valid: TokenSet[] = [];
+  const valid: Set<TokenSet> = new Set();
   for (const tokenSet of tokenSets) {
-    if (!(await isValid(tokenSet))) {
+    // For efficiency, first check if the token set exists before
+    // triggering a potentially-expensive validation of it
+    const tokenSetExists = await redb.oneOrNone(
+      `
+        SELECT 1
+        FROM token_sets
+        WHERE token_sets.id = $/id/
+        AND token_sets.schema_hash = $/schemaHash/
+      `,
+      {
+        id: tokenSet.id,
+        schemaHash: toBuffer(tokenSet.schemaHash),
+      }
+    );
+    if (tokenSetExists) {
+      // If the token set already exists, we can simply skip every other checks
+      valid.add(tokenSet);
+    } else if (!tokenSetExists && !(await isValid(tokenSet))) {
       continue;
     }
 
@@ -203,7 +238,10 @@ export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
         }
 
         attributeId = attributeResult.id;
-      } else if (schema && schema.kind === "collection-non-flagged") {
+      } else if (
+        schema &&
+        (schema.kind === "collection" || schema.kind === "collection-non-flagged")
+      ) {
         collectionId = schema.data.collection;
       }
 
@@ -236,8 +274,9 @@ export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
       // For efficiency, skip if data already exists
       const tokenSetTokensExist = await redb.oneOrNone(
         `
-          SELECT 1 FROM "token_sets_tokens" "tst"
-          WHERE "tst"."token_set_id" = $/tokenSetId/
+          SELECT 1
+          FROM token_sets_tokens
+          WHERE token_sets_tokens.token_set_id = $/tokenSetId/
           LIMIT 1
         `,
         { tokenSetId: id }
@@ -254,17 +293,17 @@ export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
 
         queries.push({
           query: `
-            INSERT INTO "token_sets_tokens" (
-              "token_set_id",
-              "contract",
-              "token_id"
+            INSERT INTO token_sets_tokens (
+              token_set_id,
+              contract,
+              token_id
             ) VALUES ${pgp.helpers.values(values, columns)}
             ON CONFLICT DO NOTHING
           `,
         });
       }
 
-      valid.push(tokenSet);
+      valid.add(tokenSet);
     } catch (error) {
       logger.error(
         "orderbook-token-list-set",
@@ -277,5 +316,5 @@ export const save = async (tokenSets: TokenSet[]): Promise<TokenSet[]> => {
     await idb.none(pgp.helpers.concat(queries));
   }
 
-  return valid;
+  return Array.from(valid);
 };
