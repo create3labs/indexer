@@ -8,7 +8,7 @@ on:
 env:
   REMOTE_HOME: "/home/c3labs"
   REMOTE_REPO_BASE_DIR: "/home/c3labs/indexer"
-  HARD_REBOOT: "true"
+  HARD_REBOOT: "false"
 
 jobs:
   prepare-provisioning:
