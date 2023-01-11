@@ -14,7 +14,7 @@ import {
   toBuffer,
 } from "@/common/utils";
 import { CollectionSets } from "@/models/collection-sets";
-import * as Sdk from "@0xlol/sdk";
+import * as Sdk from "@reservoir0x/sdk";
 import { config } from "@/config/index";
 import { getJoiPriceObject, JoiPrice } from "@/common/joi";
 import { Sources } from "@/models/sources";
