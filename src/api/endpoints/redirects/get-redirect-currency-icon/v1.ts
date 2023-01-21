@@ -41,7 +41,7 @@ export const getRedirectCurrencyIconV1Options: RouteOptions = {
       // const currencyIconImage = currency?.metadata?.image;
       // if (currencyIconImage) {
       return response
-        .redirect("https://assets.coingecko.com/coins/images/12432/small/txl.png?1646463631")
+        .redirect("https://assets.coingecko.com/coins/images/691/small/horizen.png?1555052241")
         .header("cache-control", `${1000 * 60}`);
       // }
     } catch (error) {
