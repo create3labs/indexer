@@ -339,8 +339,8 @@ export const getNetworkSettings = (): NetworkSettings => {
                   metadata
                 ) VALUES (
                   '\\x0000000000000000000000000000000000000000',
-                  'Ether',
-                  'ETH',
+                  'Horizen',
+                  'ZEN',
                   18,
                   '{}'
                 ) ON CONFLICT DO NOTHING
@@ -370,6 +370,35 @@ export const getNetworkSettings = (): NetworkSettings => {
                   '\\x0000000000000000000000000000000000000000',
                   'Transaction Lane',
                   'TXL',
+                  18,
+                  '{}'
+                ) ON CONFLICT DO NOTHING
+              `
+            ),
+          ]);
+        },
+      };
+    // Horizen Testnet
+    case 1661:
+      return {
+        ...defaultNetworkSettings,
+        backfillBlockBatchSize: 256,
+        realtimeSyncFrequencySeconds: 5,
+        onStartup: async () => {
+          // Insert the native currency
+          await Promise.all([
+            idb.none(
+              `
+                INSERT INTO currencies (
+                  contract,
+                  name,
+                  symbol,
+                  decimals,
+                  metadata
+                ) VALUES (
+                  '\\x0000000000000000000000000000000000000000',
+                  'Horizen',
+                  'ZEN',
                   18,
                   '{}'
                 ) ON CONFLICT DO NOTHING
