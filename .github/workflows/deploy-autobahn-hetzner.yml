@@ -26,7 +26,7 @@ jobs:
         uses: 3bit/setup-hcloud@v1
         id: fetch-server-info
       - run: |
-          hcloud server list -o noheader -o columns=IPV4 -l type=indexer-horizen | xargs | xargs -I '{}' sh -c 'echo ${1} > indexer_ip4_list.txt' - {}
+          hcloud server list -o noheader -o columns=IPV4 -l type=indexer-pulsechain | xargs | xargs -I '{}' sh -c 'echo ${1} > indexer_ip4_list.txt' - {}
         shell: /usr/bin/bash -ex {0}
         env:
           HCLOUD_TOKEN: ${{ secrets.PULSE_HCLOUD_TOKEN }}
